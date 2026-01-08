@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { format, parseISO } from 'date-fns';
@@ -19,8 +19,10 @@ export default function TaskEditPage() {
     const initialDate = dateParam ? parseISO(dateParam) : new Date();
 
     // フォーム状態
-    const [title, setTitle] = useState('');
-    const [dueDate, setDueDate] = useState(initialDate);
+  const [title, setTitle] = useState('');
+  const [timeSuggestion, setTimeSuggestion] = useState<{ pattern: string; converted: string; index: number } | null>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const [dueDate, setDueDate] = useState(initialDate);
     const [notificationEnabled, setNotificationEnabled] = useState(false);
     const [notificationTime, setNotificationTime] = useState('');
     const [recurrenceType, setRecurrenceType] = useState<RecurrenceType | null>(null);
@@ -74,11 +76,11 @@ export default function TaskEditPage() {
             console.log('Loading task:', taskId);
             const response = await fetch(`/api/tasks/${taskId}`);
             console.log('Task response status:', response.status);
-            
+
             if (response.ok) {
                 const data = await response.json();
                 console.log('Task data loaded:', data);
-                
+
                 if (!data.task) {
                     console.error('Task data not found in response:', data);
                     alert('タスクデータが見つかりませんでした');
@@ -86,7 +88,7 @@ export default function TaskEditPage() {
                     return;
                 }
                 setTitle(data.task.title || '');
-                
+
                 // 期日の設定: URLパラメータの日付がある場合はそれを使用、なければタスクの期日を使用
                 if (dateParam) {
                     try {
@@ -99,13 +101,13 @@ export default function TaskEditPage() {
                 } else {
                     setDueDate(data.task.due_date ? new Date(data.task.due_date) : initialDate);
                 }
-                
+
                 setNotificationEnabled(data.task.notification_enabled || false);
                 setNotificationTime(data.task.notification_time || '');
 
                 if (data.recurrence) {
                     setRecurrenceType(data.recurrence.type);
-                    
+
                     // カスタム期間の場合、単位情報から復元
                     if (data.recurrence.type === 'custom' && data.recurrence.custom_days) {
                         if (data.recurrence.custom_unit) {
@@ -249,6 +251,85 @@ export default function TaskEditPage() {
 
     const weekdayLabels = ['日', '月', '火', '水', '木', '金', '土'];
 
+    // 時間形式の検出と変換候補の生成
+    const detectTimePattern = (text: string): { pattern: string; converted: string; index: number } | null => {
+        // パターン1: 「900」「1425」など（4桁の数字）
+        let match = text.match(/\b(\d{4})\b/g);
+        if (match) {
+            const lastMatch = match[match.length - 1];
+            const index = text.lastIndexOf(lastMatch);
+            const hour = parseInt(lastMatch.substring(0, 2));
+            const minute = parseInt(lastMatch.substring(2, 4));
+            if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+                return {
+                    pattern: lastMatch,
+                    converted: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
+                    index: index
+                };
+            }
+        }
+
+        // パターン2: 「900」「925」など（3桁の数字、時:分として解釈）
+        match = text.match(/\b(\d{3})\b/g);
+        if (match) {
+            const lastMatch = match[match.length - 1];
+            const index = text.lastIndexOf(lastMatch);
+            const hour = parseInt(lastMatch.substring(0, 1));
+            const minute = parseInt(lastMatch.substring(1, 3));
+            if (hour >= 0 && hour <= 9 && minute >= 0 && minute <= 59) {
+                return {
+                    pattern: lastMatch,
+                    converted: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
+                    index: index
+                };
+            }
+        }
+
+        // パターン3: 「9:00」など（既に正しい形式の場合は変換候補を出さない）
+        match = text.match(/\b(\d{1,2}):(\d{2})\b/g);
+        if (match) {
+            // 既に正しい形式がある場合は変換候補を出さない
+            return null;
+        }
+
+        return null;
+    };
+
+    const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const newTitle = e.target.value;
+        setTitle(newTitle);
+
+        // 時間パターンを検出
+        const suggestion = detectTimePattern(newTitle);
+        setTimeSuggestion(suggestion);
+    };
+
+    const handleTimeSuggestionClick = () => {
+        if (timeSuggestion) {
+            const before = title.substring(0, timeSuggestion.index);
+            const after = title.substring(timeSuggestion.index + timeSuggestion.pattern.length);
+            const newTitle = before + timeSuggestion.converted + ' ' + after;
+            setTitle(newTitle);
+            setTimeSuggestion(null);
+            
+            // フォーカスを維持し、カーソル位置を変換した時間の後（半角スペースの後）に移動
+            setTimeout(() => {
+                if (titleInputRef.current) {
+                    const newCursorPosition = timeSuggestion.index + timeSuggestion.converted.length + 1;
+                    titleInputRef.current.focus();
+                    titleInputRef.current.setSelectionRange(newCursorPosition, newCursorPosition);
+                }
+            }, 0);
+        }
+    };
+
+    const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        // スペースやエンターを押したら変換候補をクリア
+        if (e.key === ' ' || e.key === 'Enter') {
+            setTimeSuggestion(null);
+        }
+    };
+
     return (
         <div className="min-h-screen bg-base-200">
             {/* 専用ヘッダー */}
@@ -289,13 +370,33 @@ export default function TaskEditPage() {
                     <label className="label">
                         <span className="label-text font-semibold">タイトル</span>
                     </label>
-                    <input
-                        type="text"
-                        placeholder="タスクを入力"
-                        className="input input-bordered w-full"
-                        value={title}
-                        onChange={(e) => setTitle(e.target.value)}
-                    />
+                    <div className="relative">
+                        <input
+                            ref={titleInputRef}
+                            type="text"
+                            placeholder="タスクを入力"
+                            className="input input-bordered w-full"
+                            value={title}
+                            onChange={handleTitleChange}
+                            onKeyDown={handleTitleKeyDown}
+                        />
+                        {timeSuggestion && (
+                            <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                                <button
+                                    type="button"
+                                    onClick={handleTimeSuggestionClick}
+                                    className="btn btn-sm btn-primary btn-outline"
+                                >
+                                    {timeSuggestion.converted}?
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                    <label className="label">
+                        <span className="label-text-alt text-base-content/60">
+                            900や1425と入力すると9:00、14:25と変換できます
+                        </span>
+                    </label>
                 </div>
 
                 {/* 期日選択 */}
