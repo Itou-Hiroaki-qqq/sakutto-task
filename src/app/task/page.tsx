@@ -199,9 +199,14 @@ export default function TaskEditPage() {
             });
 
             if (response.ok) {
-                // 元のページに戻る
+                // 元のページに戻る（日付パラメータを保持）
+                const returnDate = searchParams.get('date');
                 const returnUrl = searchParams.get('returnUrl') || '/top';
-                router.push(returnUrl);
+                if (returnDate) {
+                    router.push(`${returnUrl}?date=${returnDate}`);
+                } else {
+                    router.push(returnUrl);
+                }
             } else {
                 const error = await response.json();
                 console.error('Save error:', error);
@@ -250,7 +255,15 @@ export default function TaskEditPage() {
             <header className="bg-base-100 shadow-md sticky top-0 z-40">
                 <div className="container mx-auto px-4 py-4 flex items-center justify-between">
                     <button
-                        onClick={() => router.back()}
+                        onClick={() => {
+                            const returnDate = searchParams.get('date');
+                            const returnUrl = searchParams.get('returnUrl') || '/top';
+                            if (returnDate) {
+                                router.push(`${returnUrl}?date=${returnDate}`);
+                            } else {
+                                router.back();
+                            }
+                        }}
                         className="btn btn-ghost btn-circle"
                     >
                         <span className="material-icons">arrow_back</span>

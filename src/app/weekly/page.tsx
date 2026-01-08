@@ -202,7 +202,7 @@ export default function WeeklyPage() {
                                                         }
                                                     />
                                                     <a
-                                                        href={`/task?taskId=${task.task_id}&date=${dateStr}`}
+                                                        href={`/task?taskId=${task.task_id}&date=${dateStr}&returnUrl=${encodeURIComponent('/weekly')}`}
                                                         className={`flex-1 cursor-pointer text-xs ${task.completed
                                                                 ? 'line-through text-base-content/50'
                                                                 : 'text-base-content'
