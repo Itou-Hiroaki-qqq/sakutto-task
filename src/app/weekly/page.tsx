@@ -46,35 +46,50 @@ export default function WeeklyPage() {
 
     useEffect(() => {
         if (userId) {
+            let isMounted = true;
+
+            const loadWeekTasks = async () => {
+                if (!userId) return;
+
+                setLoading(true);
+                try {
+                    const tasksMap = new Map<string, DisplayTask[]>();
+
+                    // 1週間分のタスクを並列で取得
+                    const promises = weekDays.map(async (date) => {
+                        const dateStr = format(date, 'yyyy-MM-dd');
+                        const response = await fetch(`/api/tasks?date=${dateStr}`);
+                        if (!isMounted) return;
+                        if (response.ok) {
+                            const data = await response.json();
+                            if (isMounted) {
+                                tasksMap.set(dateStr, data.tasks || []);
+                            }
+                        }
+                    });
+
+                    await Promise.all(promises);
+                    if (isMounted) {
+                        setTasksByDate(tasksMap);
+                    }
+                } catch (error) {
+                    if (isMounted) {
+                        console.error('Failed to load tasks:', error);
+                    }
+                } finally {
+                    if (isMounted) {
+                        setLoading(false);
+                    }
+                }
+            };
+
             loadWeekTasks();
+
+            return () => {
+                isMounted = false;
+            };
         }
     }, [userId, currentWeek]);
-
-    const loadWeekTasks = async () => {
-        if (!userId) return;
-
-        setLoading(true);
-        try {
-            const tasksMap = new Map<string, DisplayTask[]>();
-
-            // 1週間分のタスクを並列で取得
-            const promises = weekDays.map(async (date) => {
-                const dateStr = format(date, 'yyyy-MM-dd');
-                const response = await fetch(`/api/tasks?date=${dateStr}`);
-                if (response.ok) {
-                    const data = await response.json();
-                    tasksMap.set(dateStr, data.tasks || []);
-                }
-            });
-
-            await Promise.all(promises);
-            setTasksByDate(tasksMap);
-        } catch (error) {
-            console.error('Failed to load tasks:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const handleToggleCompletion = async (
         taskId: string,
@@ -83,21 +98,22 @@ export default function WeeklyPage() {
     ) => {
         if (!userId) return;
 
-        try {
-            // 楽観的UI更新
-            const dateStr = format(date, 'yyyy-MM-dd');
-            setTasksByDate((prevMap) => {
-                const newMap = new Map(prevMap);
-                const tasks = newMap.get(dateStr) || [];
-                const updatedTasks = tasks.map((task) =>
-                    task.task_id === taskId ? { ...task, completed } : task
-                );
-                newMap.set(dateStr, updatedTasks);
-                return newMap;
-            });
+        const dateStr = format(date, 'yyyy-MM-dd');
+        
+        // 楽観的UI更新
+        setTasksByDate((prevMap) => {
+            const newMap = new Map(prevMap);
+            const tasks = newMap.get(dateStr) || [];
+            const updatedTasks = tasks.map((task) =>
+                task.task_id === taskId ? { ...task, completed } : task
+            );
+            newMap.set(dateStr, updatedTasks);
+            return newMap;
+        });
 
+        try {
             // サーバーに送信
-            await fetch('/api/tasks/completion', {
+            const response = await fetch('/api/tasks/completion', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -106,10 +122,22 @@ export default function WeeklyPage() {
                     completed,
                 }),
             });
+
+            if (!response.ok) {
+                throw new Error('Failed to update completion status');
+            }
         } catch (error) {
             console.error('Failed to toggle completion:', error);
-            // エラー時はリロード
-            loadWeekTasks();
+            // エラー時は元に戻す（楽観的UI更新をロールバック）
+            setTasksByDate((prevMap) => {
+                const newMap = new Map(prevMap);
+                const tasks = newMap.get(dateStr) || [];
+                const updatedTasks = tasks.map((task) =>
+                    task.task_id === taskId ? { ...task, completed: !completed } : task
+                );
+                newMap.set(dateStr, updatedTasks);
+                return newMap;
+            });
         }
     };
 
