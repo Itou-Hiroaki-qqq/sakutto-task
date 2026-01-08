@@ -138,23 +138,29 @@ export async function PUT(request: NextRequest) {
         WHERE id = ${taskId} AND user_id = ${user.id}
     `;
 
-        // 既存の繰り返し設定を削除
-        await sql`
-        DELETE FROM task_recurrences WHERE task_id = ${taskId}
-    `;
-
-        // 新しい繰り返し設定がある場合
+        // 繰り返し設定を更新
         if (recurrenceType) {
+            // 既存の繰り返し設定を削除
             await sql`
-        INSERT INTO task_recurrences (task_id, type, custom_days, custom_unit, weekdays)
-        VALUES (
-            ${taskId},
-            ${recurrenceType},
-            ${customDays},
-            ${customUnit || null},
-            ${selectedWeekdays ? sql`${selectedWeekdays}::integer[]` : null}
-        )
-        `;
+                DELETE FROM task_recurrences WHERE task_id = ${taskId}
+            `;
+            
+            // 新しい繰り返し設定を挿入
+            await sql`
+                INSERT INTO task_recurrences (task_id, type, custom_days, custom_unit, weekdays)
+                VALUES (
+                    ${taskId},
+                    ${recurrenceType},
+                    ${customDays},
+                    ${customUnit || null},
+                    ${selectedWeekdays ? sql`${selectedWeekdays}::integer[]` : null}
+                )
+            `;
+        } else {
+            // 繰り返し設定が選択されていない場合は削除（チェックを外した場合）
+            await sql`
+                DELETE FROM task_recurrences WHERE task_id = ${taskId}
+            `;
         }
 
         return NextResponse.json({ success: true });
