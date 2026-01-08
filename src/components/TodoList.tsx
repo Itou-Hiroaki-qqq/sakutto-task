@@ -16,9 +16,8 @@ export default function TodoList({ date, tasks, onToggleCompletion }: TodoListPr
     const holiday = getHoliday(date);
     const dateStr = format(date, 'yyyy年M月d日(E)', { locale: ja });
 
-    // 時間表示があるタスクとないタスクに分ける
-    const tasksWithTime = tasks.filter((t) => t.notification_time);
-    const tasksWithoutTime = tasks.filter((t) => !t.notification_time);
+    // tasksは既にソート済み（時間表示→繰り返し→その他、作成順）
+    // そのまま表示する
 
     return (
         <div className="todo-zone">
@@ -34,17 +33,7 @@ export default function TodoList({ date, tasks, onToggleCompletion }: TodoListPr
 
             {/* Todoリスト */}
             <div className="space-y-2">
-                {/* 時間表示があるタスク */}
-                {tasksWithTime.map((task) => (
-                    <TodoItem
-                        key={task.id}
-                        task={task}
-                        onToggleCompletion={onToggleCompletion}
-                    />
-                ))}
-
-                {/* 時間表示がないタスク */}
-                {tasksWithoutTime.map((task) => (
+                {tasks.map((task) => (
                     <TodoItem
                         key={task.id}
                         task={task}

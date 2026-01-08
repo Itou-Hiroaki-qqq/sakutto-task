@@ -55,5 +55,7 @@ export interface DisplayTask {
     completed: boolean;
     is_holiday?: boolean;
     holiday_name?: string;
+    is_recurring?: boolean;  // 繰り返しタスクかどうか
+    created_at?: Date;  // 作成日時（ソート用）
 }
 

@@ -1,6 +1,7 @@
 import { sql } from './db';
 import { Task, TaskRecurrence, TaskCompletion, DisplayTask } from '@/types/database';
 import { format, isSameDay, addDays, addWeeks, addMonths, addYears, getDay, add } from 'date-fns';
+import { extractTimeInMinutes, hasTimeInTitle } from './timeUtils';
 
 // 指定した日のタスクを取得（繰り返し設定を展開して表示用のタスクリストを作成）
 export async function getTasksForDate(
@@ -51,6 +52,8 @@ export async function getTasksForDate(
                     due_date: taskDueDate,
                     notification_time: task.notification_time || undefined,
                     completed: completion?.completed || false,
+                    is_recurring: false,
+                    created_at: new Date(task.created_at),
                 });
             }
         } else {
@@ -75,6 +78,8 @@ export async function getTasksForDate(
                     due_date: taskDueDate,
                     notification_time: task.notification_time || undefined,
                     completed: completion?.completed || false,
+                    is_recurring: true,
+                    created_at: new Date(task.created_at),
                 });
             }
         }
@@ -82,15 +87,34 @@ export async function getTasksForDate(
 
     // 3. タスクを並び替え（時間表示→繰り返し指定→その他）
     displayTasks.sort((a, b) => {
-        // 時間表示があるタスクを最上部に
-        if (a.notification_time && !b.notification_time) return -1;
-        if (!a.notification_time && b.notification_time) return 1;
-        if (a.notification_time && b.notification_time) {
-            return a.notification_time.localeCompare(b.notification_time);
+        // 1. タイトルに時間表示が含まれるタスクを最上部に
+        const aHasTime = hasTimeInTitle(a.title);
+        const bHasTime = hasTimeInTitle(b.title);
+
+        if (aHasTime && !bHasTime) return -1;
+        if (!aHasTime && bHasTime) return 1;
+
+        // 両方に時間表示がある場合、時間の順番で並べる
+        if (aHasTime && bHasTime) {
+            const aTime = extractTimeInMinutes(a.title);
+            const bTime = extractTimeInMinutes(b.title);
+            if (aTime !== null && bTime !== null) {
+                return aTime - bTime;
+            }
+            // 時間が抽出できない場合は作成順
+            const aCreated = a.created_at?.getTime() || 0;
+            const bCreated = b.created_at?.getTime() || 0;
+            return aCreated - bCreated;
         }
 
-        // 時間表示がない場合は作成順
-        return 0;
+        // 2. 繰り返し指定があるタスクを次に
+        if (a.is_recurring && !b.is_recurring) return -1;
+        if (!a.is_recurring && b.is_recurring) return 1;
+
+        // 3. その他のタスクは作成順
+        const aCreated = a.created_at?.getTime() || 0;
+        const bCreated = b.created_at?.getTime() || 0;
+        return aCreated - bCreated;
     });
 
     return displayTasks;
