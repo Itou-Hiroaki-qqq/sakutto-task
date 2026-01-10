@@ -33,6 +33,8 @@ export default function TaskEditPage() {
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+    const [deleting, setDeleting] = useState(false);
 
     useEffect(() => {
         const checkAuth = async () => {
@@ -271,6 +273,58 @@ export default function TaskEditPage() {
         }
     };
 
+    const handleDelete = async (deleteOption?: 'this_only' | 'future_all') => {
+        if (!taskIdParam) {
+            alert('削除するタスクがありません');
+            return;
+        }
+
+        const hasRecurrence = recurrenceType !== null;
+        
+        // 削除オプションが指定されていない場合、確認ダイアログを表示
+        if (!deleteOption) {
+            setShowDeleteDialog(true);
+            return;
+        }
+
+        setDeleting(true);
+        try {
+            const payload: any = {};
+            
+            if (hasRecurrence) {
+                payload.deleteOption = deleteOption;
+                payload.targetDate = format(dueDate, 'yyyy-MM-dd');
+            }
+
+            const response = await fetch(`/api/tasks/${taskIdParam}`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+
+            if (response.ok) {
+                // 元のページに戻る（日付パラメータを保持）
+                const returnDate = searchParams.get('date');
+                const returnUrl = searchParams.get('returnUrl') || '/top';
+                if (returnDate) {
+                    router.push(`${returnUrl}?date=${returnDate}`);
+                } else {
+                    router.push(returnUrl);
+                }
+            } else {
+                const error = await response.json();
+                console.error('Delete error:', error);
+                alert(error.error || '削除に失敗しました');
+            }
+        } catch (error) {
+            console.error('Failed to delete task:', error);
+            alert('削除に失敗しました');
+        } finally {
+            setDeleting(false);
+            setShowDeleteDialog(false);
+        }
+    };
+
     if (!userId || loading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
@@ -380,17 +434,32 @@ export default function TaskEditPage() {
                         <span className="material-icons">arrow_back</span>
                     </button>
                     <h1 className="text-lg font-semibold">タスク編集</h1>
-                    <button
-                        onClick={handleSave}
-                        className="btn btn-ghost btn-circle"
-                        disabled={saving}
-                    >
-                        {saving ? (
-                            <span className="loading loading-spinner loading-sm"></span>
-                        ) : (
-                            <span className="material-icons">save</span>
+                    <div className="flex gap-2">
+                        {taskIdParam && (
+                            <button
+                                onClick={() => handleDelete()}
+                                className="btn btn-ghost btn-circle"
+                                disabled={deleting}
+                            >
+                                {deleting ? (
+                                    <span className="loading loading-spinner loading-sm"></span>
+                                ) : (
+                                    <span className="material-icons text-error">delete</span>
+                                )}
+                            </button>
                         )}
-                    </button>
+                        <button
+                            onClick={handleSave}
+                            className="btn btn-ghost btn-circle"
+                            disabled={saving}
+                        >
+                            {saving ? (
+                                <span className="loading loading-spinner loading-sm"></span>
+                            ) : (
+                                <span className="material-icons">save</span>
+                            )}
+                        </button>
+                    </div>
                 </div>
             </header>
 
@@ -655,6 +724,105 @@ export default function TaskEditPage() {
                     </div>
                 </div>
             </div>
+
+            {/* 削除確認ダイアログ */}
+            {showDeleteDialog && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-base-100 rounded-lg p-6 max-w-md w-full mx-4">
+                        <h2 className="text-xl font-bold mb-4">タスクの削除</h2>
+                        {recurrenceType !== null ? (
+                            <>
+                                <p className="mb-6">このタスクは繰り返し設定が有効です。削除方法を選択してください。</p>
+                                
+                                <div className="space-y-3 mb-6">
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="radio"
+                                            name="deleteOption"
+                                            value="this_only"
+                                            defaultChecked
+                                            className="radio radio-primary"
+                                        />
+                                        <span>このタスクのみ削除</span>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="radio"
+                                            name="deleteOption"
+                                            value="future_all"
+                                            className="radio radio-primary"
+                                        />
+                                        <span>これ以降の繰り返しタスクすべてを削除</span>
+                                    </label>
+                                </div>
+
+                                <div className="flex justify-end gap-3">
+                                    <button
+                                        onClick={() => {
+                                            setShowDeleteDialog(false);
+                                        }}
+                                        className="btn btn-ghost"
+                                        disabled={deleting}
+                                    >
+                                        キャンセル
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            const selectedOption = document.querySelector('input[name="deleteOption"]:checked') as HTMLInputElement;
+                                            if (selectedOption) {
+                                                handleDelete(selectedOption.value as 'this_only' | 'future_all');
+                                            }
+                                        }}
+                                        className="btn btn-error"
+                                        disabled={deleting}
+                                    >
+                                        {deleting ? (
+                                            <>
+                                                <span className="loading loading-spinner loading-sm"></span>
+                                                削除中...
+                                            </>
+                                        ) : (
+                                            '削除'
+                                        )}
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <p className="mb-6">このタスクを削除してもよろしいですか？</p>
+                                
+                                <div className="flex justify-end gap-3">
+                                    <button
+                                        onClick={() => {
+                                            setShowDeleteDialog(false);
+                                        }}
+                                        className="btn btn-ghost"
+                                        disabled={deleting}
+                                    >
+                                        キャンセル
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            handleDelete('this_only'); // 繰り返しがない場合は'this_only'でOK
+                                        }}
+                                        className="btn btn-error"
+                                        disabled={deleting}
+                                    >
+                                        {deleting ? (
+                                            <>
+                                                <span className="loading loading-spinner loading-sm"></span>
+                                                削除中...
+                                            </>
+                                        ) : (
+                                            '削除'
+                                        )}
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

@@ -135,6 +135,29 @@ export async function shouldIncludeRecurringTask(
         return false;
     }
 
+    // 除外日をチェック
+    const exclusions = await sql`
+        SELECT excluded_date, exclusion_type
+        FROM task_exclusions
+        WHERE task_id = ${taskId}
+    `;
+
+    for (const exclusion of exclusions) {
+        const excludedDate = new Date(exclusion.excluded_date);
+        
+        if (exclusion.exclusion_type === 'single') {
+            // 特定日のみ除外
+            if (isSameDay(excludedDate, targetDate)) {
+                return false;
+            }
+        } else if (exclusion.exclusion_type === 'after') {
+            // 指定日以降除外
+            if (targetDate >= excludedDate) {
+                return false;
+            }
+        }
+    }
+
     // 期日と同日の場合は常に含める
     if (isSameDay(taskDueDate, targetDate)) {
         return true;
