@@ -121,7 +121,7 @@ export async function getTasksForDate(
 }
 
 // 繰り返しタスクが指定日に該当するかチェック
-async function shouldIncludeRecurringTask(
+export async function shouldIncludeRecurringTask(
     taskId: string,
     recurrenceType: string,
     taskDueDate: Date,

@@ -168,6 +168,36 @@ export default function TaskEditPage() {
             return;
         }
 
+        // 通知設定が有効な場合、メールアドレスまたはWeb Push設定の確認
+        if (notificationEnabled && notificationTime) {
+            try {
+                const settingsResponse = await fetch('/api/settings/notifications');
+                if (settingsResponse.ok) {
+                    const settingsData = await settingsResponse.json();
+                    const hasEmail = settingsData.settings?.email && settingsData.settings?.email_notification_enabled;
+                    const hasWebPush = settingsData.settings?.web_push_enabled;
+
+                    // メール通知もWeb Push通知も有効でない場合、通知設定ページへ遷移
+                    if (!hasEmail && !hasWebPush) {
+                        const returnDate = searchParams.get('date');
+                        const returnUrl = `/task${taskIdParam ? `?taskId=${taskIdParam}` : ''}${returnDate ? `&date=${returnDate}` : ''}`;
+                        const confirmed = confirm(
+                            '通知を送信するには、メールアドレスまたはWeb Push通知の設定が必要です。\n通知設定ページに移動しますか？'
+                        );
+                        if (confirmed) {
+                            router.push(`/settings/notifications?returnUrl=${encodeURIComponent(returnUrl)}`);
+                            return;
+                        } else {
+                            return; // ユーザーがキャンセルした場合は保存しない
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to check notification settings:', error);
+                // エラーが発生しても保存は続行（通知が送信されない可能性があるが、タスク自体は保存される）
+            }
+        }
+
         setSaving(true);
         try {
             // カスタム期間の場合、日数と単位を保存

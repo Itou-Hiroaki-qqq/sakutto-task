@@ -105,6 +105,14 @@ export default function Header({ currentDate = new Date(), onDateChange }: Heade
                         </Link>
                     </li>
                     <li>
+                        <Link
+                            href="/settings/notifications"
+                            className={pathname === '/settings/notifications' ? 'active' : ''}
+                        >
+                            通知送受信設定
+                        </Link>
+                    </li>
+                    <li>
                         <button onClick={handleLogout}>ログアウト</button>
                     </li>
                 </ul>
