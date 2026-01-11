@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { format, parseISO } from 'date-fns';
@@ -8,7 +8,7 @@ import { ja } from 'date-fns/locale';
 import DatePicker from '@/components/DatePicker';
 import { RecurrenceType } from '@/types/database';
 
-export default function TaskEditPage() {
+function TaskEditPageContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const [userId, setUserId] = useState<string | null>(null);
