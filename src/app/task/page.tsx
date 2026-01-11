@@ -254,6 +254,35 @@ function TaskEditPageContent() {
         }
     };
 
+    // 時刻を5分刻みに丸める関数
+    const roundTo5Minutes = (timeString: string): string => {
+        if (!timeString || !timeString.includes(':')) {
+            return timeString;
+        }
+        
+        const [hours, minutes] = timeString.split(':').map(Number);
+        const roundedMinutes = Math.round(minutes / 5) * 5;
+        
+        if (roundedMinutes === 60) {
+            return `${String(hours + 1).padStart(2, '0')}:00`;
+        }
+        
+        return `${String(hours).padStart(2, '0')}:${String(roundedMinutes).padStart(2, '0')}`;
+    };
+
+    const handleNotificationTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const value = e.target.value;
+        setNotificationTime(value);
+    };
+
+    const handleNotificationTimeBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+        const value = e.target.value;
+        if (value) {
+            const rounded = roundTo5Minutes(value);
+            setNotificationTime(rounded);
+        }
+    };
+
     const handleWeekdayToggle = (weekday: number) => {
         setSelectedWeekdays((prev) =>
             prev.includes(weekday)
