@@ -535,7 +535,8 @@ function TaskEditPageContent() {
                                 type="time"
                                 className="input input-bordered mt-2"
                                 value={notificationTime}
-                                onChange={(e) => setNotificationTime(e.target.value)}
+                                onChange={handleNotificationTimeChange}
+                                onBlur={handleNotificationTimeBlur}
                                 step="300"
                             />
                             <label className="label">
