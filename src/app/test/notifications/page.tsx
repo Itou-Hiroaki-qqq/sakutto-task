@@ -34,8 +34,16 @@ export default function TestNotificationsPage() {
         <Layout>
             <div className="container mx-auto px-4 py-6 max-w-2xl">
                 <h1 className="text-3xl font-bold mb-6">通知送信テスト</h1>
+                <div className="alert alert-warning mb-6">
+                    <div>
+                        <h3 className="font-bold">注意</h3>
+                        <p className="text-sm">
+                            このページは開発環境（localhost）でのみ動作します。
+                            本番環境では使用できません。
+                        </p>
+                    </div>
+                </div>
                 <p className="text-sm text-base-content/70 mb-6">
-                    このページは開発環境での動作確認用です。
                     指定した日時で通知を送信するタスクがある場合、メール通知またはWeb Push通知が送信されます。
                 </p>
 
