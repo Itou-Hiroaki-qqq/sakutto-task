@@ -3,10 +3,10 @@ import { sendNotificationsForDateTime } from '@/lib/notifications';
 import { parseISO, format } from 'date-fns';
 
 // テスト用: 手動で通知を送信するエンドポイント
-// 開発環境での動作確認用
+// 開発環境での動作確認用（本番環境では無効化）
 export async function POST(request: NextRequest) {
     try {
-        // 開発環境でのみ動作（本番環境では無効化推奨）
+        // 開発環境でのみ動作（本番環境では無効化）
         if (process.env.NODE_ENV === 'production') {
             return NextResponse.json(
                 { error: 'This endpoint is only available in development' },
