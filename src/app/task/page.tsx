@@ -530,12 +530,20 @@ function TaskEditPageContent() {
                         />
                     </label>
                     {notificationEnabled && (
-                        <input
-                            type="time"
-                            className="input input-bordered mt-2"
-                            value={notificationTime}
-                            onChange={(e) => setNotificationTime(e.target.value)}
-                        />
+                        <div>
+                            <input
+                                type="time"
+                                className="input input-bordered mt-2"
+                                value={notificationTime}
+                                onChange={(e) => setNotificationTime(e.target.value)}
+                                step="300"
+                            />
+                            <label className="label">
+                                <span className="label-text-alt text-base-content/60">
+                                    通知は5分刻みで送信されます（例: 13:00, 13:05, 13:10...）
+                                </span>
+                            </label>
+                        </div>
                     )}
                 </div>
 
