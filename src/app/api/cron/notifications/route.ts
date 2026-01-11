@@ -2,17 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sendNotificationsForDateTime } from '@/lib/notifications';
 import { format } from 'date-fns';
 
-// Vercel Cron Jobから呼び出されるエンドポイント
-// このエンドポイントは毎分実行される想定（または必要に応じてスケジュール設定）
+// GitHub Actions Cron Jobから呼び出されるエンドポイント
+// このエンドポイントは5分ごとに実行される想定
 export async function GET(request: NextRequest) {
     try {
-        // Vercel Cronの認証（オプション: セキュリティのため）
+        // 認証（セキュリティのため）
         const authHeader = request.headers.get('authorization');
-        if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-            // 開発環境では認証をスキップ（本番環境では推奨）
-            if (process.env.NODE_ENV === 'production') {
-                return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-            }
+        const cronSecret = process.env.CRON_SECRET;
+        
+        if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
         // 現在の日時を取得
