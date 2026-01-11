@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
 import TodoList from '@/components/TodoList';
@@ -9,7 +9,7 @@ import { DisplayTask } from '@/types/database';
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, addWeeks, subWeeks } from 'date-fns';
 import { ja } from 'date-fns/locale';
 
-export default function WeeklyPage() {
+function WeeklyPageContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const [currentWeek, setCurrentWeek] = useState(() => {
@@ -259,6 +259,22 @@ export default function WeeklyPage() {
                 )}
             </div>
         </Layout>
+    );
+}
+
+
+
+export default function WeeklyPage() {
+    return (
+        <Suspense fallback={
+            <Layout>
+                <div className="flex items-center justify-center min-h-screen">
+                    <span className="loading loading-spinner loading-lg"></span>
+                </div>
+            </Layout>
+        }>
+            <WeeklyPageContent />
+        </Suspense>
     );
 }
 

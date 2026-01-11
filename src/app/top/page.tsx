@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Calendar from '@/components/Calendar';
 import TodoList from '@/components/TodoList';
@@ -9,7 +9,7 @@ import { createClient } from '@/lib/supabase/client';
 import { DisplayTask } from '@/types/database';
 import { format, parseISO } from 'date-fns';
 
-export default function TopPage() {
+function TopPageContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const [selectedDate, setSelectedDate] = useState(() => {
@@ -221,6 +221,22 @@ export default function TopPage() {
                 </div>
             </div>
         </Layout>
+    );
+}
+
+
+
+export default function TopPage() {
+    return (
+        <Suspense fallback={
+            <Layout>
+                <div className="flex items-center justify-center min-h-screen">
+                    <span className="loading loading-spinner loading-lg"></span>
+                </div>
+            </Layout>
+        }>
+            <TopPageContent />
+        </Suspense>
     );
 }
 
