@@ -224,8 +224,6 @@ function TopPageContent() {
     );
 }
 
-
-
 export default function TopPage() {
     return (
         <Suspense fallback={
@@ -239,4 +237,3 @@ export default function TopPage() {
         </Suspense>
     );
 }
-
