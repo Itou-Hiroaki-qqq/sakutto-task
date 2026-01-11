@@ -10,6 +10,22 @@ jobs:
   trigger-notifications:
     runs-on: ubuntu-latest
     steps:
+      - name: Check secrets
+        run: |
+          if [ -z "$VERCEL_URL" ]; then
+            echo "Error: VERCEL_URL secret is not set"
+            exit 1
+          fi
+          if [ -z "$CRON_SECRET" ]; then
+            echo "Error: CRON_SECRET secret is not set"
+            exit 1
+          fi
+          echo "VERCEL_URL is set (length: ${#VERCEL_URL})"
+          echo "CRON_SECRET is set (length: ${#CRON_SECRET})"
+        env:
+          VERCEL_URL: ${{ secrets.VERCEL_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      
       - name: Trigger notification endpoint
         run: |
           response=$(curl -s -w "\n%{http_code}" -X GET "$VERCEL_URL/api/cron/notifications" \
