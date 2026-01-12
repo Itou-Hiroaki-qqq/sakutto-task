@@ -143,13 +143,13 @@ export default function Calendar({ currentDate, selectedDate, displayMonth: prop
                                 <button
                                     key={index}
                                     onClick={() => onDateSelect(day)}
-                                    className={`btn btn-sm btn-ghost aspect-square p-0 ${!isCurrentMonth
-                                        ? 'text-base-content/30'
+                                    className={`btn btn-sm aspect-square p-0 ${!isCurrentMonth
+                                        ? 'btn-ghost text-base-content/30'
                                         : isSelected
-                                            ? 'btn-primary'
+                                            ? 'btn-primary ring-4 ring-primary ring-offset-2 font-bold'
                                             : isToday
-                                                ? 'bg-primary/20 font-bold'
-                                                : ''
+                                                ? 'btn-ghost bg-primary/20 font-bold'
+                                                : 'btn-ghost'
                                         } ${isWeekend && isCurrentMonth ? (day.getDay() === 0 ? 'text-red-500' : 'text-blue-500') : ''}`}
                                 >
                                     <div className="flex flex-col items-center">
