@@ -9,7 +9,8 @@ import { ja } from 'date-fns/locale';
 
 interface SearchResult {
     date: string;
-    taskCount: number;
+    taskId: string;
+    title: string;
 }
 
 export default function SearchPage() {
@@ -113,22 +114,22 @@ export default function SearchPage() {
                                 <span className="loading loading-spinner loading-lg"></span>
                             </div>
                         ) : results.length > 0 ? (
-                            results.map((result) => {
+                            results.map((result, index) => {
                                 const date = new Date(result.date);
                                 const dateStr = format(date, 'yyyy-MM-dd');
                                 const displayDate = format(date, 'yyyy年M月d日(E)', { locale: ja });
 
                                 return (
                                     <button
-                                        key={dateStr}
+                                        key={`${result.taskId}-${dateStr}-${index}`}
                                         onClick={() => handleDateClick(dateStr)}
-                                        className="btn btn-outline w-full justify-start"
+                                        className="btn btn-outline w-full justify-start text-left"
                                     >
-                                        <div className="flex items-center justify-between w-full">
-                                            <span>{displayDate}</span>
-                                            <span className="badge badge-primary badge-lg">
-                                                {result.taskCount}件
+                                        <div className="flex flex-col items-start w-full gap-1">
+                                            <span className="text-sm text-base-content/70">
+                                                {displayDate}
                                             </span>
+                                            <span className="text-base">{result.title}</span>
                                         </div>
                                     </button>
                                 );
