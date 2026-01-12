@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS task_recurrences (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     task_id UUID NOT NULL,
-    type VARCHAR(20) NOT NULL CHECK (type IN ('daily', 'weekly', 'monthly', 'yearly', 'weekdays', 'custom')),
+    type VARCHAR(20) NOT NULL CHECK (type IN ('daily', 'weekly', 'monthly', 'monthly_end', 'yearly', 'weekdays', 'custom')),
     custom_days INTEGER, -- カスタム期間の場合の日数
     weekdays INTEGER[],  -- 指定曜日（0=日曜, 1=月曜, ..., 6=土曜）
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,

@@ -3,6 +3,7 @@ export type RecurrenceType =
     | 'daily'        // 毎日
     | 'weekly'       // 毎週
     | 'monthly'      // 毎月
+    | 'monthly_end'  // 毎月末
     | 'yearly'       // 毎年
     | 'weekdays'     // 指定曜日
     | 'custom';      // カスタム期間

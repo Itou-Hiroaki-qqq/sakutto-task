@@ -618,6 +618,16 @@ function TaskEditPageContent() {
                             <input
                                 type="checkbox"
                                 className="checkbox checkbox-primary"
+                                checked={recurrenceType === 'monthly_end'}
+                                onChange={() => handleRecurrenceChange(recurrenceType === 'monthly_end' ? null : 'monthly_end')}
+                            />
+                            <span className="label-text mr-4">毎月末</span>
+                        </label>
+
+                        <label className="label cursor-pointer justify-start py-3">
+                            <input
+                                type="checkbox"
+                                className="checkbox checkbox-primary"
                                 checked={recurrenceType === 'yearly'}
                                 onChange={() => handleRecurrenceChange(recurrenceType === 'yearly' ? null : 'yearly')}
                             />

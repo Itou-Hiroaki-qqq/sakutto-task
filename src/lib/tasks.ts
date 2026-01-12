@@ -1,6 +1,6 @@
 import { sql } from './db';
 import { Task, TaskRecurrence, TaskCompletion, DisplayTask } from '@/types/database';
-import { format, isSameDay, addDays, addWeeks, addMonths, addYears, getDay, add } from 'date-fns';
+import { format, isSameDay, addDays, addWeeks, addMonths, addYears, getDay, add, endOfMonth } from 'date-fns';
 import { extractTimeInMinutes, hasTimeInTitle } from './timeUtils';
 
 // 指定した日のタスクを取得（繰り返し設定を展開して表示用のタスクリストを作成）
@@ -175,6 +175,11 @@ export async function shouldIncludeRecurringTask(
         case 'monthly':
             // 毎月: 同じ日
             return taskDueDate.getDate() === targetDate.getDate();
+
+        case 'monthly_end':
+            // 毎月末: その月の最終日
+            const targetMonthEnd = endOfMonth(targetDate);
+            return isSameDay(targetDate, targetMonthEnd);
 
         case 'yearly':
             // 毎年: 同じ月日

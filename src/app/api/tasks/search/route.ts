@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sql } from '@/lib/db';
-import { format, getDay } from 'date-fns';
+import { format, getDay, endOfMonth, isSameDay } from 'date-fns';
 
 export async function GET(request: NextRequest) {
     try {
@@ -165,6 +165,11 @@ async function getRecurringDatesWithExclusions(
                 break;
             case 'monthly':
                 shouldInclude = current.getDate() === startDate.getDate();
+                break;
+            case 'monthly_end':
+                // 毎月末: その月の最終日
+                const currentMonthEnd = endOfMonth(current);
+                shouldInclude = isSameDay(current, currentMonthEnd);
                 break;
             case 'yearly':
                 shouldInclude =
