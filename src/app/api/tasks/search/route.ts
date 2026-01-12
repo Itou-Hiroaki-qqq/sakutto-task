@@ -203,6 +203,17 @@ async function getRecurringDatesWithExclusions(
                             (current.getMonth() - startDate.getMonth());
                         shouldInclude = monthsDiff >= 0 && monthsDiff % customDays === 0;
                     }
+                } else if (customUnit === 'months_end') {
+                    // 月単位（月末）の場合: その月の最終日
+                    const currentMonthEnd = endOfMonth(current);
+                    if (!isSameDay(current, currentMonthEnd)) {
+                        shouldInclude = false;
+                    } else {
+                        const monthsDiff =
+                            (current.getFullYear() - startDate.getFullYear()) * 12 +
+                            (current.getMonth() - startDate.getMonth());
+                        shouldInclude = monthsDiff >= 0 && monthsDiff % customDays === 0;
+                    }
                 } else if (customUnit === 'years') {
                     if (
                         current.getMonth() !== startDate.getMonth() ||

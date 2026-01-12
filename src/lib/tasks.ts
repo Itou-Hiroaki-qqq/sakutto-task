@@ -224,6 +224,18 @@ export async function shouldIncludeRecurringTask(
                 return monthsDiff >= 0 && monthsDiff % customDays === 0;
             }
 
+            // 月単位（月末）の場合: その月の最終日
+            if (customUnit === 'months_end') {
+                const targetMonthEnd = endOfMonth(targetDate);
+                if (!isSameDay(targetDate, targetMonthEnd)) {
+                    return false;
+                }
+                const monthsDiff =
+                    (targetDate.getFullYear() - taskDueDate.getFullYear()) * 12 +
+                    (targetDate.getMonth() - taskDueDate.getMonth());
+                return monthsDiff >= 0 && monthsDiff % customDays === 0;
+            }
+
             // 年単位の場合: 同じ月日に表示
             if (customUnit === 'years') {
                 if (

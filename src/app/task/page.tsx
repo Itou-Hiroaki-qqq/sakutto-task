@@ -27,7 +27,7 @@ function TaskEditPageContent() {
     const [notificationTime, setNotificationTime] = useState('');
     const [recurrenceType, setRecurrenceType] = useState<RecurrenceType | null>(null);
     const [customDays, setCustomDays] = useState<number | null>(null);
-    const [customUnit, setCustomUnit] = useState<'days' | 'weeks' | 'months' | 'years'>('days');
+    const [customUnit, setCustomUnit] = useState<'days' | 'weeks' | 'months' | 'months_end' | 'years'>('days');
     const [selectedWeekdays, setSelectedWeekdays] = useState<number[]>([]);
 
     const [showDatePicker, setShowDatePicker] = useState(false);
@@ -114,7 +114,7 @@ function TaskEditPageContent() {
                     if (data.recurrence.type === 'custom' && data.recurrence.custom_days) {
                         if (data.recurrence.custom_unit) {
                             // 単位情報がある場合はそれを使用
-                            setCustomUnit(data.recurrence.custom_unit as 'days' | 'weeks' | 'months' | 'years');
+                            setCustomUnit(data.recurrence.custom_unit as 'days' | 'weeks' | 'months' | 'months_end' | 'years');
                             setCustomDays(data.recurrence.custom_days);
                         } else {
                             // 単位情報がない場合は推測（後方互換性）
@@ -742,6 +742,29 @@ function TaskEditPageContent() {
                                             disabled={customUnit !== 'months'}
                                         />
                                         <span>ヵ月おき</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="radio"
+                                            name="customUnit"
+                                            className="radio radio-primary"
+                                            checked={customUnit === 'months_end'}
+                                            onChange={() => setCustomUnit('months_end')}
+                                        />
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            placeholder="月数"
+                                            className="input input-bordered w-20"
+                                            value={customUnit === 'months_end' ? (customDays || '') : ''}
+                                            onChange={(e) => {
+                                                if (customUnit === 'months_end') {
+                                                    setCustomDays(e.target.value ? parseInt(e.target.value) : null);
+                                                }
+                                            }}
+                                            disabled={customUnit !== 'months_end'}
+                                        />
+                                        <span>ヵ月おきの月末</span>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <input
