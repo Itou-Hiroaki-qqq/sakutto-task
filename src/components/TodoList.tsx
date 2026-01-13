@@ -16,8 +16,18 @@ export default function TodoList({ date, tasks, onToggleCompletion }: TodoListPr
     const holiday = getHoliday(date);
     const dateStr = format(date, 'yyyy年M月d日(E)', { locale: ja });
 
-    // tasksは既にソート済み（時間表示→繰り返し→その他、作成順）
-    // そのまま表示する
+    // チェック済みタスクを下部に移動（元の並び順を維持）
+    const sortedTasks = tasks
+        .map((task, index) => ({ task, index }))
+        .sort((a, b) => {
+            // 未完了タスクを先に、完了タスクを後に
+            if (a.task.completed !== b.task.completed) {
+                return a.task.completed ? 1 : -1;
+            }
+            // 同じ状態の場合は元の並び順を維持
+            return a.index - b.index;
+        })
+        .map(({ task }) => task);
 
     return (
         <div className="todo-zone">
@@ -33,7 +43,7 @@ export default function TodoList({ date, tasks, onToggleCompletion }: TodoListPr
 
             {/* Todoリスト */}
             <div className="space-y-2">
-                {tasks.map((task) => (
+                {sortedTasks.map((task) => (
                     <TodoItem
                         key={task.id}
                         task={task}
