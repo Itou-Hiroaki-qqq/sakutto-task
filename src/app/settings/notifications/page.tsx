@@ -243,16 +243,12 @@ export default function NotificationSettingsPage() {
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
                                 />
-                                <label className="label">
-                                    <span className="label-text-alt">
-                                        タスクの期日・通知時刻にメール通知が送信されます
-                                    </span>
-                                </label>
-                                <label className="label">
-                                    <span className="label-text-alt text-base-content/60">
-                                        ログインアドレスでよい場合はこのまま保存、違うアドレスを使用する場合は変更して保存してください
-                                    </span>
-                                </label>
+                                <p className="text-sm text-base-content/70">
+                                    タスクの期日・通知時刻にメール通知が送信されます
+                                </p>
+                                <p className="text-sm text-base-content/60">
+                                    ログインアドレスでよい場合はこのまま保存、違うアドレスを使用する場合は変更して保存してください
+                                </p>
                             </div>
                         )}
                     </div>

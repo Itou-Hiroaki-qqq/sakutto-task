@@ -520,11 +520,9 @@ function TaskEditPageContent() {
                             </div>
                         )}
                     </div>
-                    <label className="label">
-                        <span className="label-text-alt text-base-content/60">
-                            900や1425と入力すると9:00、14:25と変換できます
-                        </span>
-                    </label>
+                    <p className="text-sm text-base-content/60">
+                        900や1425と入力すると9:00、14:25と変換できます
+                    </p>
                 </div>
 
                 {/* 期日選択 */}
