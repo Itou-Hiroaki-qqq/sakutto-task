@@ -36,7 +36,7 @@ export default function Header({ currentDate = new Date(), onDateChange }: Heade
     const month = format(currentDate, 'M月', { locale: ja });
 
     return (
-        <header className="navbar bg-base-100 shadow-lg">
+        <header className="navbar bg-base-100 shadow-lg fixed top-0 left-0 right-0 z-50">
             <div className="flex-1">
                 <Link 
                     href={`/top?date=${format(new Date(), 'yyyy-MM-dd')}`}

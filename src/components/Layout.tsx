@@ -11,7 +11,7 @@ export default function Layout({ children, currentDate, onDateChange }: LayoutPr
     return (
         <div className="min-h-screen flex flex-col">
             <Header currentDate={currentDate} onDateChange={onDateChange} />
-            <main className="flex-1">{children}</main>
+            <main className="flex-1 pt-16">{children}</main>
             <Footer />
         </div>
     );
