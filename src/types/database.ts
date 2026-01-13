@@ -81,3 +81,36 @@ export interface WebPushSubscription {
     created_at: Date;
     updated_at: Date;
 }
+
+// 記念日の基本情報
+export interface Memorial {
+    id: string;
+    user_id: string;
+    title: string;
+    due_date: Date;
+    notification_time?: string;  // HH:mm形式
+    notification_enabled: boolean;
+    created_at: Date;
+    updated_at: Date;
+}
+
+// 記念日の繰り返し設定
+export interface MemorialRecurrence {
+    id: string;
+    memorial_id: string;
+    type: RecurrenceType;
+    custom_days?: number;
+    custom_unit?: 'days' | 'weeks' | 'months' | 'months_end' | 'years';
+    weekdays?: number[];
+}
+
+// 表示用の記念日（繰り返し展開後）
+export interface DisplayMemorial {
+    id: string;
+    memorial_id: string;
+    title: string;
+    date: Date;
+    due_date: Date;
+    is_recurring?: boolean;
+    created_at?: Date;
+}

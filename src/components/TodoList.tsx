@@ -10,9 +10,10 @@ interface TodoListProps {
     date: Date;
     tasks: DisplayTask[];
     onToggleCompletion: (taskId: string, completed: boolean) => void;
+    memorials?: Array<{ id: string; title: string }>;
 }
 
-export default function TodoList({ date, tasks, onToggleCompletion }: TodoListProps) {
+export default function TodoList({ date, tasks, onToggleCompletion, memorials = [] }: TodoListProps) {
     const holiday = getHoliday(date);
     const dateStr = format(date, 'yyyy年M月d日(E)', { locale: ja });
 
@@ -37,6 +38,13 @@ export default function TodoList({ date, tasks, onToggleCompletion }: TodoListPr
                     <span>{holiday.name}</span>
                 </div>
             )}
+
+            {/* 記念日情報 */}
+            {memorials.map((memorial) => (
+                <div key={memorial.id} className="alert alert-success mb-4">
+                    <span>{memorial.title}</span>
+                </div>
+            ))}
 
             {/* 日付表示 */}
             <h2 className="text-xl font-bold mb-4">{dateStr}</h2>

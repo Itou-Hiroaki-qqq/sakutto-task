@@ -98,6 +98,14 @@ export default function Header({ currentDate = new Date(), onDateChange }: Heade
                     </li>
                     <li>
                         <Link
+                            href="/memorial"
+                            className={pathname === '/memorial' ? 'active' : ''}
+                        >
+                            記念日設定
+                        </Link>
+                    </li>
+                    <li>
+                        <Link
                             href="/search"
                             className={pathname === '/search' ? 'active' : ''}
                         >

@@ -35,6 +35,7 @@ function TopPageContent() {
         return new Date();
     });
     const [tasks, setTasks] = useState<DisplayTask[]>([]);
+    const [memorials, setMemorials] = useState<Array<{ id: string; title: string }>>([]);
     const [userId, setUserId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
 
@@ -103,15 +104,23 @@ function TopPageContent() {
 
                 setLoading(true);
                 try {
-                    const response = await fetch(
-                        `/api/tasks?date=${format(selectedDate, 'yyyy-MM-dd')}`
-                    );
+                    const [tasksResponse, memorialsResponse] = await Promise.all([
+                        fetch(`/api/tasks?date=${format(selectedDate, 'yyyy-MM-dd')}`),
+                        fetch(`/api/memorials?date=${format(selectedDate, 'yyyy-MM-dd')}`),
+                    ]);
                     if (!isMounted) return;
 
-                    if (response.ok) {
-                        const data = await response.json();
+                    if (tasksResponse.ok) {
+                        const tasksData = await tasksResponse.json();
                         if (isMounted) {
-                            setTasks(data.tasks || []);
+                            setTasks(tasksData.tasks || []);
+                        }
+                    }
+
+                    if (memorialsResponse.ok) {
+                        const memorialsData = await memorialsResponse.json();
+                        if (isMounted) {
+                            setMemorials(memorialsData.memorials || []);
                         }
                     }
                 } catch (error) {
@@ -215,6 +224,7 @@ function TopPageContent() {
                                 date={selectedDate}
                                 tasks={tasks}
                                 onToggleCompletion={handleToggleCompletion}
+                                memorials={memorials}
                             />
                         )}
                     </div>

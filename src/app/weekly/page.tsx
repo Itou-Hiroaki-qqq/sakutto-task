@@ -17,6 +17,7 @@ function WeeklyPageContent() {
         return weekParam ? new Date(weekParam) : new Date();
     });
     const [tasksByDate, setTasksByDate] = useState<Map<string, DisplayTask[]>>(new Map());
+    const [memorialsByDate, setMemorialsByDate] = useState<Map<string, Array<{ id: string; title: string }>>>(new Map());
     const [userId, setUserId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
 
