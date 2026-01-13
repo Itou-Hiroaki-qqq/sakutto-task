@@ -534,17 +534,17 @@ function MemorialEditPageContent() {
                                     <div key={memorial.id} className="flex items-center justify-between p-3 bg-base-100 rounded-lg shadow hover:shadow-md transition-shadow">
                                         <button
                                             onClick={() => router.push(`/memorial?memorialId=${memorial.id}`)}
-                                            className="flex-1 text-left"
+                                            className="flex-1 text-left min-w-0"
                                         >
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-sm text-base-content/60">
+                                            <div className="flex items-start gap-2 min-w-0">
+                                                <span className="text-sm text-base-content/60 shrink-0">
                                                     {memorial.recurrence_type === 'yearly'
                                                         ? format(memorial.due_date, 'M月d日', { locale: ja })
                                                         : format(memorial.due_date, 'yyyy年M月d日', { locale: ja })}
                                                 </span>
-                                                <span>{memorial.title}</span>
+                                                <span className="flex-1 min-w-0 wrap-break-word">{memorial.title}</span>
                                                 {memorial.recurrence_type && (
-                                                    <span className="badge badge-sm badge-outline">毎年</span>
+                                                    <span className="badge badge-sm badge-outline shrink-0">毎年</span>
                                                 )}
                                             </div>
                                         </button>
