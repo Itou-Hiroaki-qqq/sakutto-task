@@ -26,15 +26,29 @@ export async function GET(request: NextRequest) {
         const roundedMinutes = Math.floor(minutes / 5) * 5;
         const roundedTime = new Date(jstTime);
         roundedTime.setMinutes(roundedMinutes, 0, 0);
+        
+        // 直前の5分刻み時刻も計算（実行遅延に対応）
+        const previousRoundedTime = new Date(roundedTime);
+        previousRoundedTime.setMinutes(previousRoundedTime.getMinutes() - 5);
+        
         const currentDate = format(roundedTime, 'yyyy-MM-dd');
         const currentTime = format(roundedTime, 'HH:mm');
+        const previousTime = format(previousRoundedTime, 'HH:mm');
 
-        console.log(`Checking notifications for ${currentDate} ${currentTime} (JST)`);
+        console.log(`Checking notifications for ${currentDate} ${currentTime} and ${previousTime} (JST)`);
         console.log(`UTC time: ${format(now, 'yyyy-MM-dd HH:mm')} (UTC)`);
-        console.log(`Original JST time: ${format(jstTime, 'yyyy-MM-dd HH:mm')} (JST), rounded to: ${currentTime}`);
+        console.log(`Original JST time: ${format(jstTime, 'yyyy-MM-dd HH:mm')} (JST), rounded to: ${currentTime}, previous: ${previousTime}`);
 
-        // 通知を送信（日本時間で検索、5分刻みに丸めた時刻を使用）
-        const result = await sendNotificationsForDateTime(roundedTime, currentTime);
+        // 通知を送信（現在時刻と直前の5分刻み時刻の両方を検索）
+        const result1 = await sendNotificationsForDateTime(roundedTime, currentTime);
+        const result2 = await sendNotificationsForDateTime(previousRoundedTime, previousTime);
+        
+        // 結果を統合
+        const result = {
+            emailCount: result1.emailCount + result2.emailCount,
+            webPushCount: result1.webPushCount + result2.webPushCount,
+            errors: [...result1.errors, ...result2.errors],
+        };
 
         return NextResponse.json({
             success: true,
