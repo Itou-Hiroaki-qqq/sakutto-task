@@ -28,8 +28,8 @@ self.addEventListener('push', function(event) {
     
     const options = {
         body: notificationData.body || 'タスクの通知が届きました',
-        icon: '/favicon.ico',
-        badge: '/favicon.ico',
+        icon: '/icon.png',
+        badge: '/icon.png',
         tag: notificationData.tag || 'task-notification',
         requireInteraction: false,
         data: notificationData.data || {},
