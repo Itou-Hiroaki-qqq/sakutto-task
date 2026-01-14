@@ -796,8 +796,8 @@ function TaskEditPageContent() {
 
             {/* 削除確認ダイアログ */}
             {showDeleteDialog && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-base-100 rounded-lg p-6 max-w-md w-full mx-4">
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-hidden p-4">
+                    <div className="bg-base-100 rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
                         <h2 className="text-xl font-bold mb-4">タスクの削除</h2>
                         {recurrenceType !== null ? (
                             <>
