@@ -15,6 +15,9 @@ export default function DataManagementPage() {
         importedMemorials: number;
         errors?: string[];
     } | null>(null);
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [importData, setImportData] = useState<any>(null);
+    const [showConfirmDialog, setShowConfirmDialog] = useState(false);
 
     const handleExport = async () => {
         setLoading(true);
@@ -52,26 +55,46 @@ export default function DataManagementPage() {
         }
     };
 
-    const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) {
             return;
         }
 
+        try {
+            // ファイルを読み込む
+            const text = await file.text();
+            const data = JSON.parse(text);
+            
+            setSelectedFile(file);
+            setImportData(data);
+            setShowConfirmDialog(true);
+        } catch (error) {
+            console.error('File read error:', error);
+            setMessage({
+                type: 'error',
+                text: 'ファイルの読み込みに失敗しました。JSONファイルを選択してください。',
+            });
+            event.target.value = '';
+        }
+    };
+
+    const handleConfirmImport = async () => {
+        if (!importData) {
+            return;
+        }
+
+        setShowConfirmDialog(false);
         setImporting(true);
         setMessage(null);
         setImportResult(null);
 
         try {
-            // ファイルを読み込む
-            const text = await file.text();
-            const data = JSON.parse(text);
-
             // インポートAPIを呼び出し
             const response = await fetch('/api/import', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data),
+                body: JSON.stringify(importData),
             });
 
             if (!response.ok) {
@@ -93,6 +116,10 @@ export default function DataManagementPage() {
                     text: `データのインポートが完了しました（タスク ${result.importedTasks}件、記念日 ${result.importedMemorials}件）`,
                 });
             }
+
+            // ファイル選択をリセット
+            setSelectedFile(null);
+            setImportData(null);
         } catch (error) {
             console.error('Import error:', error);
             setMessage({
@@ -101,8 +128,17 @@ export default function DataManagementPage() {
             });
         } finally {
             setImporting(false);
-            // ファイル入力欄をリセット
-            event.target.value = '';
+        }
+    };
+
+    const handleCancelImport = () => {
+        setShowConfirmDialog(false);
+        setSelectedFile(null);
+        setImportData(null);
+        // ファイル入力欄をリセット
+        const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+        if (fileInput) {
+            fileInput.value = '';
         }
     };
 
@@ -157,7 +193,7 @@ export default function DataManagementPage() {
                             <input
                                 type="file"
                                 accept=".json"
-                                onChange={handleImport}
+                                onChange={handleFileSelect}
                                 disabled={importing}
                                 className="file-input file-input-bordered file-input-primary w-full max-w-xs"
                             />
@@ -170,6 +206,34 @@ export default function DataManagementPage() {
                         )}
                     </div>
                 </div>
+
+                {/* 確認ダイアログ */}
+                {showConfirmDialog && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                        <div className="bg-base-100 rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+                            <h3 className="text-xl font-bold mb-4">データをインポートしますか？</h3>
+                            <p className="mb-6">
+                                既存データに上書きされず、既存のデータに追加される形でインポートされますが、本当にインポートしますか？
+                            </p>
+                            <div className="flex justify-end gap-3">
+                                <button
+                                    className="btn btn-ghost"
+                                    onClick={handleCancelImport}
+                                    disabled={importing}
+                                >
+                                    キャンセル
+                                </button>
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={handleConfirmImport}
+                                    disabled={importing}
+                                >
+                                    インポートする
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* インポート結果の詳細表示 */}
                 {importResult && importResult.errors && importResult.errors.length > 0 && (
