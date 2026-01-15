@@ -27,12 +27,14 @@ export async function GET(request: NextRequest) {
         const roundedTime = new Date(jstTime);
         roundedTime.setMinutes(roundedMinutes, 0, 0);
         
-        // 過去10分間のすべての5分刻み時刻をチェック（cron実行遅延に対応）
-        // 現在時刻から過去に遡って、-10分, -5分, 0分, +5分の時刻をチェック
+        // 過去60分間のすべての5分刻み時刻をチェック（cron実行の不規則な間隔に対応）
+        // GitHub Actionsのcronは設定では5分ごとだが、実際の実行間隔は不規則（10分～1時間程度）
+        // そのため、過去60分分のすべての5分刻み時刻をチェックすることで、確実に通知を送信する
         const timeChecks: Array<{ date: Date; time: string }> = [];
         
-        // 過去10分、過去5分、現在、未来5分の時刻をチェック
-        for (let offset = -10; offset <= 5; offset += 5) {
+        // 過去60分～未来5分のすべての5分刻み時刻をチェック（合計13個の時刻）
+        // -60分, -55分, -50分, ..., -5分, 0分（現在）, +5分
+        for (let offset = -60; offset <= 5; offset += 5) {
             const checkTime = new Date(roundedTime);
             checkTime.setMinutes(checkTime.getMinutes() + offset);
             // 日付が変わる場合は自動的に処理される（Dateオブジェクトが自動調整）
