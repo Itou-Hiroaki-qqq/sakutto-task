@@ -121,11 +121,17 @@ export async function POST(request: NextRequest) {
         }
 
         // タスクを作成
+        // notification_timeは文字列型（HH:mm形式）で保存
         const taskResult = await sql`
         INSERT INTO tasks (user_id, title, due_date, notification_enabled, notification_time)
-        VALUES (${user.id}, ${title}, ${dueDate}, ${notificationEnabled}, ${notificationTime})
-        RETURNING id
+        VALUES (${user.id}, ${title}, ${dueDate}, ${notificationEnabled}, ${notificationTime || null})
+        RETURNING id, notification_time
     `;
+        
+        // デバッグ: 保存された通知時刻をログ出力
+        if (notificationEnabled && notificationTime) {
+            console.log(`[Task Creation] Task created with notification_time: "${notificationTime}" (saved as: "${taskResult[0].notification_time}")`);
+        }
 
         const taskId = taskResult[0].id;
 
@@ -188,14 +194,21 @@ export async function PUT(request: NextRequest) {
         }
 
         // タスクを更新
-        await sql`
+        // notification_timeは文字列型（HH:mm形式）で保存
+        const updateResult = await sql`
         UPDATE tasks
         SET title = ${title},
             due_date = ${dueDate},
             notification_enabled = ${notificationEnabled},
-            notification_time = ${notificationTime}
+            notification_time = ${notificationTime || null}
         WHERE id = ${taskId} AND user_id = ${user.id}
+        RETURNING notification_time
     `;
+        
+        // デバッグ: 更新された通知時刻をログ出力
+        if (notificationEnabled && notificationTime && updateResult.length > 0) {
+            console.log(`[Task Update] Task updated with notification_time: "${notificationTime}" (saved as: "${updateResult[0].notification_time}")`);
+        }
 
         // 繰り返し設定を更新
         if (recurrenceType) {

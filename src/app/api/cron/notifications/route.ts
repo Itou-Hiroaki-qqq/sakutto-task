@@ -27,27 +27,38 @@ export async function GET(request: NextRequest) {
         const roundedTime = new Date(jstTime);
         roundedTime.setMinutes(roundedMinutes, 0, 0);
         
-        // 直前の5分刻み時刻も計算（実行遅延に対応）
+        // 直前と直後の5分刻み時刻も計算（実行遅延に対応）
         const previousRoundedTime = new Date(roundedTime);
         previousRoundedTime.setMinutes(previousRoundedTime.getMinutes() - 5);
+        
+        const nextRoundedTime = new Date(roundedTime);
+        nextRoundedTime.setMinutes(nextRoundedTime.getMinutes() + 5);
         
         const currentDate = format(roundedTime, 'yyyy-MM-dd');
         const currentTime = format(roundedTime, 'HH:mm');
         const previousTime = format(previousRoundedTime, 'HH:mm');
+        const nextTime = format(nextRoundedTime, 'HH:mm');
 
-        console.log(`Checking notifications for ${currentDate} ${currentTime} and ${previousTime} (JST)`);
-        console.log(`UTC time: ${format(now, 'yyyy-MM-dd HH:mm')} (UTC)`);
-        console.log(`Original JST time: ${format(jstTime, 'yyyy-MM-dd HH:mm')} (JST), rounded to: ${currentTime}, previous: ${previousTime}`);
+        console.log(`[Cron] Checking notifications for ${currentDate} ${currentTime}, ${previousTime}, and ${nextTime} (JST)`);
+        console.log(`[Cron] UTC time: ${format(now, 'yyyy-MM-dd HH:mm')} (UTC)`);
+        console.log(`[Cron] Original JST time: ${format(jstTime, 'yyyy-MM-dd HH:mm')} (JST), rounded to: ${currentTime}, previous: ${previousTime}, next: ${nextTime}`);
 
-        // 通知を送信（現在時刻と直前の5分刻み時刻の両方を検索）
-        const result1 = await sendNotificationsForDateTime(roundedTime, currentTime);
-        const result2 = await sendNotificationsForDateTime(previousRoundedTime, previousTime);
+        // 通知を送信（現在時刻、直前、直後の5分刻み時刻を検索）
+        // これにより、cron実行の遅延や時刻のずれに対応
+        console.log(`[Cron] Sending notifications for previous time: ${format(previousRoundedTime, 'yyyy-MM-dd')} ${previousTime}`);
+        const result1 = await sendNotificationsForDateTime(previousRoundedTime, previousTime);
+        
+        console.log(`[Cron] Sending notifications for current time: ${currentDate} ${currentTime}`);
+        const result2 = await sendNotificationsForDateTime(roundedTime, currentTime);
+        
+        console.log(`[Cron] Sending notifications for next time: ${format(nextRoundedTime, 'yyyy-MM-dd')} ${nextTime}`);
+        const result3 = await sendNotificationsForDateTime(nextRoundedTime, nextTime);
         
         // 結果を統合
         const result = {
-            emailCount: result1.emailCount + result2.emailCount,
-            webPushCount: result1.webPushCount + result2.webPushCount,
-            errors: [...result1.errors, ...result2.errors],
+            emailCount: result1.emailCount + result2.emailCount + result3.emailCount,
+            webPushCount: result1.webPushCount + result2.webPushCount + result3.webPushCount,
+            errors: [...result1.errors, ...result2.errors, ...result3.errors],
         };
 
         return NextResponse.json({

@@ -38,6 +38,7 @@ export async function getTasksToNotify(
     console.log(`[Notification] Getting tasks to notify for date ${targetDate.toISOString().split('T')[0]} at time ${targetTime}`);
     
     // 指定時刻に通知が必要なタスクをすべて取得
+    // 注意: notification_timeは文字列型なので、トリムして比較
     const tasks = await sql`
         SELECT 
             t.id as task_id,
@@ -53,10 +54,40 @@ export async function getTasksToNotify(
         LEFT JOIN task_recurrences tr ON t.id = tr.task_id
         WHERE 
             t.notification_enabled = true
-            AND t.notification_time = ${targetTime}
+            AND TRIM(t.notification_time) = TRIM(${targetTime})
     `;
 
     console.log(`[Notification] Found ${tasks.length} task(s) with notification_enabled=true and notification_time=${targetTime}`);
+    
+    // デバッグ: 実際に取得されたタスクの詳細をログ出力
+    if (tasks.length > 0) {
+        console.log(`[Notification] Retrieved tasks:`, tasks.map((t: any) => ({
+            id: t.task_id,
+            title: t.title,
+            notification_time: t.notification_time,
+            due_date: t.due_date,
+            recurrence_type: t.recurrence_type
+        })));
+    } else {
+        // 通知が有効なタスクをすべて取得して、なぜマッチしないか確認
+        const allEnabledTasks = await sql`
+            SELECT 
+                t.id as task_id,
+                t.title,
+                t.notification_time,
+                t.due_date
+            FROM tasks t
+            WHERE t.notification_enabled = true
+            LIMIT 10
+        `;
+        console.log(`[Notification] All enabled tasks (sample):`, allEnabledTasks.map((t: any) => ({
+            id: t.task_id,
+            title: t.title,
+            notification_time: t.notification_time,
+            notification_time_type: typeof t.notification_time,
+            due_date: t.due_date
+        })));
+    }
 
     const result: Array<{
         taskId: string;
@@ -303,11 +334,8 @@ export async function sendNotificationsForDateTime(
         console.log(`[Notification] User ${task.userId} settings: email_enabled=${setting.email_notification_enabled}, email=${setting.email || 'none'}, web_push_enabled=${setting.web_push_enabled}`);
 
         // メール通知を送信
-        if (
-            setting.email_notification_enabled &&
-            setting.email &&
-            task.notificationTime === targetTime
-        ) {
+        // 注意: SQLクエリで既に時刻でフィルタリングされているので、重複チェックは不要
+        if (setting.email_notification_enabled && setting.email) {
             console.log(`[Notification] Sending email notification to ${setting.email} for task "${task.title}"`);
             const emailResult = await sendEmailNotification(
                 setting.email,
@@ -330,13 +358,12 @@ export async function sendNotificationsForDateTime(
                 console.log(`[Notification] Email notifications are disabled for user ${task.userId}`);
             } else if (!setting.email) {
                 console.log(`[Notification] No email address set for user ${task.userId}`);
-            } else if (task.notificationTime !== targetTime) {
-                console.log(`[Notification] Notification time mismatch: task=${task.notificationTime}, target=${targetTime}`);
             }
         }
 
         // Web Push通知を送信
-        if (setting.web_push_enabled && task.notificationTime === targetTime) {
+        // 注意: SQLクエリで既に時刻でフィルタリングされているので、重複チェックは不要
+        if (setting.web_push_enabled) {
             console.log(`[WebPush] Attempting to send push notification to user ${task.userId} for task ${task.taskId}`);
             const pushSent = await sendWebPushNotification(
                 task.userId,
@@ -353,11 +380,7 @@ export async function sendNotificationsForDateTime(
                 console.error(`[WebPush] ${errorMsg}`);
             }
         } else {
-            if (!setting.web_push_enabled) {
-                console.log(`[WebPush] Web push is disabled for user ${task.userId}`);
-            } else if (task.notificationTime !== targetTime) {
-                console.log(`[WebPush] Notification time mismatch: task=${task.notificationTime}, target=${targetTime}`);
-            }
+            console.log(`[WebPush] Web push is disabled for user ${task.userId}`);
         }
     }
 
