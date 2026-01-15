@@ -27,38 +27,40 @@ export async function GET(request: NextRequest) {
         const roundedTime = new Date(jstTime);
         roundedTime.setMinutes(roundedMinutes, 0, 0);
         
-        // 直前と直後の5分刻み時刻も計算（実行遅延に対応）
-        const previousRoundedTime = new Date(roundedTime);
-        previousRoundedTime.setMinutes(previousRoundedTime.getMinutes() - 5);
+        // 過去10分間のすべての5分刻み時刻をチェック（cron実行遅延に対応）
+        // 現在時刻から過去に遡って、-10分, -5分, 0分, +5分の時刻をチェック
+        const timeChecks: Array<{ date: Date; time: string }> = [];
         
-        const nextRoundedTime = new Date(roundedTime);
-        nextRoundedTime.setMinutes(nextRoundedTime.getMinutes() + 5);
+        // 過去10分、過去5分、現在、未来5分の時刻をチェック
+        for (let offset = -10; offset <= 5; offset += 5) {
+            const checkTime = new Date(roundedTime);
+            checkTime.setMinutes(checkTime.getMinutes() + offset);
+            // 日付が変わる場合は自動的に処理される（Dateオブジェクトが自動調整）
+            const checkTimeStr = format(checkTime, 'HH:mm');
+            timeChecks.push({ date: checkTime, time: checkTimeStr });
+        }
         
         const currentDate = format(roundedTime, 'yyyy-MM-dd');
         const currentTime = format(roundedTime, 'HH:mm');
-        const previousTime = format(previousRoundedTime, 'HH:mm');
-        const nextTime = format(nextRoundedTime, 'HH:mm');
-
-        console.log(`[Cron] Checking notifications for ${currentDate} ${currentTime}, ${previousTime}, and ${nextTime} (JST)`);
+        
         console.log(`[Cron] UTC time: ${format(now, 'yyyy-MM-dd HH:mm')} (UTC)`);
-        console.log(`[Cron] Original JST time: ${format(jstTime, 'yyyy-MM-dd HH:mm')} (JST), rounded to: ${currentTime}, previous: ${previousTime}, next: ${nextTime}`);
+        console.log(`[Cron] JST time: ${format(jstTime, 'yyyy-MM-dd HH:mm')} (JST)`);
+        console.log(`[Cron] Checking notifications for ${timeChecks.length} time slots:`, 
+            timeChecks.map(t => `${format(t.date, 'yyyy-MM-dd')} ${t.time}`).join(', '));
 
-        // 通知を送信（現在時刻、直前、直後の5分刻み時刻を検索）
-        // これにより、cron実行の遅延や時刻のずれに対応
-        console.log(`[Cron] Sending notifications for previous time: ${format(previousRoundedTime, 'yyyy-MM-dd')} ${previousTime}`);
-        const result1 = await sendNotificationsForDateTime(previousRoundedTime, previousTime);
-        
-        console.log(`[Cron] Sending notifications for current time: ${currentDate} ${currentTime}`);
-        const result2 = await sendNotificationsForDateTime(roundedTime, currentTime);
-        
-        console.log(`[Cron] Sending notifications for next time: ${format(nextRoundedTime, 'yyyy-MM-dd')} ${nextTime}`);
-        const result3 = await sendNotificationsForDateTime(nextRoundedTime, nextTime);
+        // 各時刻について通知を送信
+        const results = await Promise.all(
+            timeChecks.map(async ({ date, time }) => {
+                console.log(`[Cron] Sending notifications for ${format(date, 'yyyy-MM-dd')} ${time}`);
+                return await sendNotificationsForDateTime(date, time);
+            })
+        );
         
         // 結果を統合
         const result = {
-            emailCount: result1.emailCount + result2.emailCount + result3.emailCount,
-            webPushCount: result1.webPushCount + result2.webPushCount + result3.webPushCount,
-            errors: [...result1.errors, ...result2.errors, ...result3.errors],
+            emailCount: results.reduce((sum, r) => sum + r.emailCount, 0),
+            webPushCount: results.reduce((sum, r) => sum + r.webPushCount, 0),
+            errors: results.flatMap(r => r.errors),
         };
 
         return NextResponse.json({

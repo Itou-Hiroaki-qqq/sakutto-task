@@ -70,7 +70,38 @@ export async function getTasksToNotify(
         })));
     } else {
         // 通知が有効なタスクをすべて取得して、なぜマッチしないか確認
+        // 特に、通知時刻が設定されているタスクを詳しく確認
         const allEnabledTasks = await sql`
+            SELECT 
+                t.id as task_id,
+                t.title,
+                t.notification_time,
+                t.due_date,
+                tr.type as recurrence_type
+            FROM tasks t
+            LEFT JOIN task_recurrences tr ON t.id = tr.task_id
+            WHERE t.notification_enabled = true
+            AND t.notification_time IS NOT NULL
+            AND t.notification_time != ''
+            ORDER BY t.created_at DESC
+            LIMIT 20
+        `;
+        console.log(`[Notification] All enabled tasks with notification_time (recent 20):`, allEnabledTasks.map((t: any) => ({
+            id: t.task_id,
+            title: t.title,
+            notification_time: t.notification_time,
+            notification_time_trimmed: t.notification_time ? String(t.notification_time).trim() : null,
+            target_time: targetTime,
+            target_time_trimmed: targetTime.trim(),
+            matches: t.notification_time ? String(t.notification_time).trim() === targetTime.trim() : false,
+            due_date: t.due_date,
+            recurrence_type: t.recurrence_type
+        })));
+        
+        // さらに、通知時刻が近いタスクを検索（5分以内）
+        const targetHour = parseInt(targetTime.split(':')[0]);
+        const targetMin = parseInt(targetTime.split(':')[1]);
+        const nearbyTasks = await sql`
             SELECT 
                 t.id as task_id,
                 t.title,
@@ -78,15 +109,23 @@ export async function getTasksToNotify(
                 t.due_date
             FROM tasks t
             WHERE t.notification_enabled = true
+            AND t.notification_time IS NOT NULL
+            AND t.notification_time != ''
+            AND (
+                t.notification_time LIKE ${`${String(targetHour).padStart(2, '0')}:%`}
+                OR t.notification_time LIKE ${targetHour > 0 ? `${String(targetHour - 1).padStart(2, '0')}:%` : '23:%'}
+                OR t.notification_time LIKE ${targetHour < 23 ? `${String(targetHour + 1).padStart(2, '0')}:%` : '00:%'}
+            )
             LIMIT 10
         `;
-        console.log(`[Notification] All enabled tasks (sample):`, allEnabledTasks.map((t: any) => ({
-            id: t.task_id,
-            title: t.title,
-            notification_time: t.notification_time,
-            notification_time_type: typeof t.notification_time,
-            due_date: t.due_date
-        })));
+        if (nearbyTasks.length > 0) {
+            console.log(`[Notification] Nearby notification times found:`, nearbyTasks.map((t: any) => ({
+                id: t.task_id,
+                title: t.title,
+                notification_time: t.notification_time,
+                due_date: t.due_date
+            })));
+        }
     }
 
     const result: Array<{
