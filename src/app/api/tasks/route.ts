@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getTasksForDate } from '@/lib/tasks';
+import { getTasksForDate, getOverdueTaskDates } from '@/lib/tasks';
 import { sql } from '@/lib/db';
+import { isSameDay, startOfDay, format } from 'date-fns';
 
 export async function GET(request: NextRequest) {
     try {
@@ -24,7 +25,18 @@ export async function GET(request: NextRequest) {
         const date = new Date(dateStr);
         const tasks = await getTasksForDate(user.id, date);
 
-        return NextResponse.json({ tasks });
+        // 現在日の場合、未完了の過去タスクがある日を取得
+        const today = startOfDay(new Date());
+        const targetDate = startOfDay(date);
+        let overdueDates: Date[] = [];
+        if (isSameDay(targetDate, today)) {
+            overdueDates = await getOverdueTaskDates(user.id, today);
+        }
+
+        return NextResponse.json({ 
+            tasks,
+            overdueDates: overdueDates.map(d => format(d, 'yyyy-MM-dd'))
+        });
     } catch (error) {
         console.error('Error fetching tasks:', error);
         return NextResponse.json(

@@ -36,6 +36,7 @@ function TopPageContent() {
     });
     const [tasks, setTasks] = useState<DisplayTask[]>([]);
     const [memorials, setMemorials] = useState<Array<{ id: string; title: string }>>([]);
+    const [overdueDates, setOverdueDates] = useState<Date[]>([]);
     const [userId, setUserId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
 
@@ -114,6 +115,12 @@ function TopPageContent() {
                         const tasksData = await tasksResponse.json();
                         if (isMounted) {
                             setTasks(tasksData.tasks || []);
+                            // 未完了の過去タスクがある日を設定
+                            if (tasksData.overdueDates) {
+                                setOverdueDates(tasksData.overdueDates.map((d: string) => parseISO(d)));
+                            } else {
+                                setOverdueDates([]);
+                            }
                         }
                     }
 
@@ -225,6 +232,7 @@ function TopPageContent() {
                                 tasks={tasks}
                                 onToggleCompletion={handleToggleCompletion}
                                 memorials={memorials}
+                                overdueDates={overdueDates}
                             />
                         )}
                     </div>

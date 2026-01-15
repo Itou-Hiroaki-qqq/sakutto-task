@@ -11,9 +11,10 @@ interface TodoListProps {
     tasks: DisplayTask[];
     onToggleCompletion: (taskId: string, completed: boolean) => void;
     memorials?: Array<{ id: string; title: string }>;
+    overdueDates?: Date[]; // 未完了の過去タスクがある日
 }
 
-export default function TodoList({ date, tasks, onToggleCompletion, memorials = [] }: TodoListProps) {
+export default function TodoList({ date, tasks, onToggleCompletion, memorials = [], overdueDates = [] }: TodoListProps) {
     const holiday = getHoliday(date);
     const dateStr = format(date, 'yyyy年M月d日(E)', { locale: ja });
 
@@ -65,6 +66,17 @@ export default function TodoList({ date, tasks, onToggleCompletion, memorials = 
                     </div>
                 )}
             </div>
+
+            {/* 未完了の過去タスクがある日のメッセージ */}
+            {overdueDates.length > 0 && (
+                <div className="mt-6 space-y-2">
+                    {overdueDates.map((overdueDate) => (
+                        <div key={format(overdueDate, 'yyyy-MM-dd')} className="alert alert-warning">
+                            <span>{format(overdueDate, 'M月d日', { locale: ja })}に未完了のタスクがあります</span>
+                        </div>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
@@ -89,19 +101,13 @@ function TodoItem({
                 onChange={handleCheckboxChange}
             />
             <Link
-                href={`/task?taskId=${task.task_id}&date=${format(isSameDay(task.date, task.due_date) ? task.date : task.due_date, 'yyyy-MM-dd')}&returnUrl=${encodeURIComponent('/top')}`}
+                href={`/task?taskId=${task.task_id}&date=${format(task.due_date, 'yyyy-MM-dd')}&returnUrl=${encodeURIComponent('/top')}`}
                 className={`flex-1 cursor-pointer ${task.completed
                         ? 'line-through text-base-content/50'
                         : 'text-base-content'
                     }`}
             >
                 <div className="flex items-center gap-2">
-                    {/* 過去の未完了タスクの警告アイコン */}
-                    {!task.completed && !isSameDay(task.date, task.due_date) && (
-                        <span className="material-icons text-warning text-lg" title="期限を過ぎたタスク">
-                            warning
-                        </span>
-                    )}
                     {task.notification_time && (
                         <span className="badge badge-outline badge-sm">
                             {task.notification_time}

@@ -1,6 +1,6 @@
 import { sql } from './db';
 import { Task, TaskRecurrence, TaskCompletion, DisplayTask } from '@/types/database';
-import { format, isSameDay, addDays, addWeeks, addMonths, addYears, getDay, add, endOfMonth, isBefore, startOfDay } from 'date-fns';
+import { format, isSameDay, addDays, addWeeks, addMonths, addYears, getDay, add, endOfMonth, isBefore, startOfDay, parseISO } from 'date-fns';
 import { extractTimeInMinutes, hasTimeInTitle } from './timeUtils';
 
 // 指定した日のタスクを取得（繰り返し設定を展開して表示用のタスクリストを作成）
@@ -34,48 +34,63 @@ export async function getTasksForDate(
 
     const displayTasks: DisplayTask[] = [];
 
-    // 2. まず、表示される可能性があるタスクIDと日付のペアを収集
-    const completionPairs: Array<{ taskId: string; date: Date }> = [];
+    // 2. まず、繰り返しタスクのIDを収集して除外日を取得
     const recurringTaskIds: string[] = [];
+    for (const task of tasks) {
+        if (task.recurrence_type) {
+            recurringTaskIds.push(task.id);
+        }
+    }
+
+    // 3. バッチで除外日を取得（繰り返しタスクのみ）
+    const exclusionsMap = await getTaskExclusionsBatch(recurringTaskIds);
+
+    // 4. 表示される可能性があるタスクIDと日付のペアを収集
+    const completionPairs: Array<{ taskId: string; date: Date }> = [];
 
     for (const task of tasks) {
         const taskDueDate = new Date(task.due_date);
         taskDueDate.setHours(0, 0, 0, 0);
 
-        // 2-1. 単発タスク（繰り返しなし）
+        // 4-1. 単発タスク（繰り返しなし）
         if (!task.recurrence_type) {
             if (isSameDay(taskDueDate, targetDate)) {
                 completionPairs.push({ taskId: task.id, date: targetDate });
             }
         } else {
-            // 2-2. 繰り返しタスクは後で処理（除外日が必要なため）
-            recurringTaskIds.push(task.id);
+            // 4-2. 繰り返しタスク: 除外日を使って該当するかチェック
+            const exclusions = exclusionsMap.get(task.id) || null;
+            const shouldInclude = shouldIncludeRecurringTaskWithExclusions(
+                task.id,
+                task.recurrence_type,
+                taskDueDate,
+                targetDate,
+                task.custom_days,
+                task.custom_unit,
+                task.recurrence_weekdays,
+                exclusions
+            );
+
+            if (shouldInclude) {
+                completionPairs.push({ taskId: task.id, date: targetDate });
+            }
         }
     }
 
-    // 3. バッチで完了状態を取得
+    // 5. バッチで完了状態を取得
     const completionsMap = await getTaskCompletionsBatch(completionPairs);
 
-    // 4. バッチで除外日を取得（繰り返しタスクのみ）
-    const exclusionsMap = await getTaskExclusionsBatch(recurringTaskIds);
-
-    // 5. 各タスクについて、指定日に該当するかチェック
+    // 6. 各タスクについて、表示用のタスクリストを作成
     for (const task of tasks) {
         const taskDueDate = new Date(task.due_date);
         taskDueDate.setHours(0, 0, 0, 0);
 
-        // 5-1. 単発タスク（繰り返しなし）
+        // 6-1. 単発タスク（繰り返しなし）
         if (!task.recurrence_type) {
             if (isSameDay(taskDueDate, targetDate)) {
                 const completionKey = `${task.id}_${dateStr}`;
                 const completion = completionsMap.get(completionKey);
                 const isCompleted = completion?.completed || false;
-                
-                // 過去の日付の未完了タスクは除外（現在日に表示されるため）
-                if (isBefore(targetDateStart, today) && !isCompleted) {
-                    // 過去の未完了タスクは現在日に表示されるため、過去の日からは除外
-                    continue;
-                }
                 
                 displayTasks.push({
                     id: `single-${task.id}`,
@@ -90,7 +105,7 @@ export async function getTasksForDate(
                 });
             }
         } else {
-            // 5-2. 繰り返しタスク
+            // 6-2. 繰り返しタスク
             const exclusions = exclusionsMap.get(task.id) || null;
             const shouldInclude = shouldIncludeRecurringTaskWithExclusions(
                 task.id,
@@ -108,12 +123,6 @@ export async function getTasksForDate(
                 const completion = completionsMap.get(completionKey);
                 const isCompleted = completion?.completed || false;
                 
-                // 過去の日付の未完了タスクは除外（現在日に表示されるため）
-                if (isBefore(targetDateStart, today) && !isCompleted) {
-                    // 過去の未完了タスクは現在日に表示されるため、過去の日からは除外
-                    continue;
-                }
-                
                 displayTasks.push({
                     id: `recurring-${task.id}-${dateStr}`,
                     task_id: task.id,
@@ -129,179 +138,9 @@ export async function getTasksForDate(
         }
     }
 
-    // 6. 現在日が選択されている場合、過去の未完了タスクを追加
-    if (isToday) {
-        // 過去の未完了タスク用の完了状態ペアを収集
-        const overdueCompletionPairs: Array<{ taskId: string; date: Date }> = [];
 
-        // すべてのタスクを再度取得して、過去の未完了タスクをチェック
-        for (const task of tasks) {
-            const taskDueDate = new Date(task.due_date);
-            taskDueDate.setHours(0, 0, 0, 0);
-
-            // 過去の日付（今日より前）で、既にdisplayTasksに含まれていないタスクをチェック
-            if (isBefore(taskDueDate, today)) {
-                // 単発タスクの場合
-                if (!task.recurrence_type) {
-                    // 既にdisplayTasksに含まれているかチェック
-                    const alreadyIncluded = displayTasks.some(
-                        dt => dt.task_id === task.id && isSameDay(dt.due_date, taskDueDate)
-                    );
-                    
-                    if (!alreadyIncluded) {
-                        overdueCompletionPairs.push({ taskId: task.id, date: taskDueDate });
-                    }
-                } else {
-                    // 繰り返しタスクの場合、過去の日付で未完了のタスクをチェック
-                    const exclusions = exclusionsMap.get(task.id) || null;
-                    
-                    // 繰り返しタスクの過去の各出現日をチェック（最大365日分チェック）
-                    let checkDate = new Date(taskDueDate);
-                    while (isBefore(checkDate, today)) {
-                        const shouldInclude = shouldIncludeRecurringTaskWithExclusions(
-                            task.id,
-                            task.recurrence_type,
-                            taskDueDate,
-                            checkDate,
-                            task.custom_days,
-                            task.custom_unit,
-                            task.recurrence_weekdays,
-                            exclusions
-                        );
-
-                        if (shouldInclude) {
-                            // 既にdisplayTasksに含まれているかチェック
-                            const alreadyIncluded = displayTasks.some(
-                                dt => dt.task_id === task.id && isSameDay(dt.date, checkDate)
-                            );
-
-                            if (!alreadyIncluded) {
-                                overdueCompletionPairs.push({ taskId: task.id, date: new Date(checkDate) });
-                            }
-                        }
-
-                        // 次の日をチェック（効率化のため、繰り返しタイプに応じて適切に日付を進める）
-                        if (task.recurrence_type === 'daily') {
-                            checkDate = addDays(checkDate, 1);
-                        } else if (task.recurrence_type === 'weekly') {
-                            checkDate = addDays(checkDate, 7);
-                        } else if (task.recurrence_type === 'monthly' || task.recurrence_type === 'monthly_end') {
-                            checkDate = addMonths(checkDate, 1);
-                        } else if (task.recurrence_type === 'yearly') {
-                            checkDate = addYears(checkDate, 1);
-                        } else {
-                            // その他の繰り返しタイプは1日ずつチェック（効率は悪いが確実）
-                            checkDate = addDays(checkDate, 1);
-                        }
-
-                        // 無限ループ防止（最大365日分チェック）
-                        if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > 365) {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        // 過去のタスクの完了状態をバッチ取得
-        const overdueCompletionsMap = await getTaskCompletionsBatch(overdueCompletionPairs);
-
-        // 過去の未完了タスクを追加
-        for (const task of tasks) {
-            const taskDueDate = new Date(task.due_date);
-            taskDueDate.setHours(0, 0, 0, 0);
-
-            if (isBefore(taskDueDate, today)) {
-                if (!task.recurrence_type) {
-                    const alreadyIncluded = displayTasks.some(
-                        dt => dt.task_id === task.id && isSameDay(dt.due_date, taskDueDate)
-                    );
-                    
-                    if (!alreadyIncluded) {
-                        const completionKey = `${task.id}_${format(taskDueDate, 'yyyy-MM-dd')}`;
-                        const completion = overdueCompletionsMap.get(completionKey);
-                        if (!completion?.completed) {
-                            displayTasks.push({
-                                id: `overdue-${task.id}-${format(taskDueDate, 'yyyy-MM-dd')}`,
-                                task_id: task.id,
-                                title: task.title,
-                                date: today,
-                                due_date: taskDueDate,
-                                notification_time: task.notification_time || undefined,
-                                completed: false,
-                                is_recurring: false,
-                                created_at: new Date(task.created_at),
-                            });
-                        }
-                    }
-                } else {
-                    const exclusions = exclusionsMap.get(task.id) || null;
-                    let checkDate = new Date(taskDueDate);
-                    
-                    while (isBefore(checkDate, today)) {
-                        const shouldInclude = shouldIncludeRecurringTaskWithExclusions(
-                            task.id,
-                            task.recurrence_type,
-                            taskDueDate,
-                            checkDate,
-                            task.custom_days,
-                            task.custom_unit,
-                            task.recurrence_weekdays,
-                            exclusions
-                        );
-
-                        if (shouldInclude) {
-                            const alreadyIncluded = displayTasks.some(
-                                dt => dt.task_id === task.id && isSameDay(dt.due_date, checkDate)
-                            );
-
-                            if (!alreadyIncluded) {
-                                const completionKey = `${task.id}_${format(checkDate, 'yyyy-MM-dd')}`;
-                                const completion = overdueCompletionsMap.get(completionKey);
-                                if (!completion?.completed) {
-                                    displayTasks.push({
-                                        id: `overdue-recurring-${task.id}-${format(checkDate, 'yyyy-MM-dd')}`,
-                                        task_id: task.id,
-                                        title: task.title,
-                                        date: today,
-                                        due_date: checkDate,
-                                        notification_time: task.notification_time || undefined,
-                                        completed: false,
-                                        is_recurring: true,
-                                        created_at: new Date(task.created_at),
-                                    });
-                                }
-                            }
-                        }
-
-                        if (task.recurrence_type === 'daily') {
-                            checkDate = addDays(checkDate, 1);
-                        } else if (task.recurrence_type === 'weekly') {
-                            checkDate = addDays(checkDate, 7);
-                        } else if (task.recurrence_type === 'monthly' || task.recurrence_type === 'monthly_end') {
-                            checkDate = addMonths(checkDate, 1);
-                        } else if (task.recurrence_type === 'yearly') {
-                            checkDate = addYears(checkDate, 1);
-                        } else {
-                            checkDate = addDays(checkDate, 1);
-                        }
-
-                        if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > 365) {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 4. タスクを並び替え（時間表示→繰り返し指定→その他、過去のタスクは最後に）
+    // 4. タスクを並び替え（時間表示→繰り返し指定→その他）
     displayTasks.sort((a, b) => {
-        // 0. 過去の未完了タスク（dateとdue_dateが異なる）を最後に
-        const aIsOverdue = !isSameDay(a.date, a.due_date);
-        const bIsOverdue = !isSameDay(b.date, b.due_date);
-        if (aIsOverdue && !bIsOverdue) return 1;
-        if (!aIsOverdue && bIsOverdue) return -1;
         // 1. タイトルに時間表示が含まれるタスクを最上部に
         const aHasTime = hasTimeInTitle(a.title);
         const bHasTime = hasTimeInTitle(b.title);
@@ -333,6 +172,118 @@ export async function getTasksForDate(
     });
 
     return displayTasks;
+}
+
+// 未完了の過去タスクがある日を取得（現在日の場合のみ使用）
+export async function getOverdueTaskDates(
+    userId: string,
+    today: Date
+): Promise<Date[]> {
+    const todayStart = startOfDay(today);
+    
+    // すべてのタスクを取得（繰り返し設定も含む）
+    const tasks = await sql`
+    SELECT 
+        t.id,
+        t.user_id,
+        t.title,
+        t.due_date,
+        t.created_at,
+        tr.type as recurrence_type,
+        tr.custom_days,
+        tr.custom_unit,
+        tr.weekdays as recurrence_weekdays
+    FROM tasks t
+    LEFT JOIN task_recurrences tr ON t.id = tr.task_id
+    WHERE t.user_id = ${userId}
+    ORDER BY t.created_at ASC
+    `;
+
+    const overdueCompletionPairs: Array<{ taskId: string; date: Date }> = [];
+    const recurringTaskIds: string[] = [];
+    const overdueDatesSet = new Set<string>();
+
+    for (const task of tasks) {
+        const taskDueDate = new Date(task.due_date);
+        taskDueDate.setHours(0, 0, 0, 0);
+
+        if (isBefore(taskDueDate, todayStart)) {
+            if (!task.recurrence_type) {
+                // 単発タスクの場合
+                overdueCompletionPairs.push({ taskId: task.id, date: taskDueDate });
+            } else {
+                // 繰り返しタスクの場合
+                recurringTaskIds.push(task.id);
+            }
+        }
+    }
+
+    // 除外日をバッチ取得
+    const exclusionsMap = await getTaskExclusionsBatch(recurringTaskIds);
+
+    // 繰り返しタスクの過去の出現日をチェック
+    for (const task of tasks) {
+        const taskDueDate = new Date(task.due_date);
+        taskDueDate.setHours(0, 0, 0, 0);
+
+        if (isBefore(taskDueDate, todayStart) && task.recurrence_type) {
+            const exclusions = exclusionsMap.get(task.id) || null;
+            
+            let checkDate = new Date(taskDueDate);
+            while (isBefore(checkDate, todayStart)) {
+                const shouldInclude = shouldIncludeRecurringTaskWithExclusions(
+                    task.id,
+                    task.recurrence_type,
+                    taskDueDate,
+                    checkDate,
+                    task.custom_days,
+                    task.custom_unit,
+                    task.recurrence_weekdays,
+                    exclusions
+                );
+
+                if (shouldInclude) {
+                    overdueCompletionPairs.push({ taskId: task.id, date: new Date(checkDate) });
+                }
+
+                // 次の日をチェック
+                if (task.recurrence_type === 'daily') {
+                    checkDate = addDays(checkDate, 1);
+                } else if (task.recurrence_type === 'weekly') {
+                    checkDate = addDays(checkDate, 7);
+                } else if (task.recurrence_type === 'monthly' || task.recurrence_type === 'monthly_end') {
+                    checkDate = addMonths(checkDate, 1);
+                } else if (task.recurrence_type === 'yearly') {
+                    checkDate = addYears(checkDate, 1);
+                } else {
+                    checkDate = addDays(checkDate, 1);
+                }
+
+                // 無限ループ防止
+                if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > 365) {
+                    break;
+                }
+            }
+        }
+    }
+
+    // 完了状態をバッチ取得
+    const completionsMap = await getTaskCompletionsBatch(overdueCompletionPairs);
+
+    // 未完了のタスクがある日を収集
+    for (const pair of overdueCompletionPairs) {
+        const completionKey = `${pair.taskId}_${format(pair.date, 'yyyy-MM-dd')}`;
+        const completion = completionsMap.get(completionKey);
+        if (!completion?.completed) {
+            const dateKey = format(pair.date, 'yyyy-MM-dd');
+            overdueDatesSet.add(dateKey);
+        }
+    }
+
+    // 日付の配列に変換して返す
+    return Array.from(overdueDatesSet)
+        .map(dateStr => parseISO(dateStr))
+        .sort((a, b) => a.getTime() - b.getTime());
 }
 
 // 繰り返しタスクが指定日に該当するかチェック（除外日データを引数で受け取る版）
@@ -549,7 +500,22 @@ async function getTaskCompletionsBatch(
 
     const completionMap = new Map<string, TaskCompletion>();
     for (const row of allCompletions as any[]) {
-        const key = `${row.task_id}_${row.completed_date}`;
+        // completed_dateをyyyy-MM-dd形式の文字列に変換
+        let completedDateStr: string;
+        if (row.completed_date instanceof Date) {
+            completedDateStr = format(row.completed_date, 'yyyy-MM-dd');
+        } else if (typeof row.completed_date === 'string') {
+            // 既にyyyy-MM-dd形式の場合はそのまま、そうでない場合は変換
+            if (/^\d{4}-\d{2}-\d{2}$/.test(row.completed_date)) {
+                completedDateStr = row.completed_date;
+            } else {
+                completedDateStr = format(new Date(row.completed_date), 'yyyy-MM-dd');
+            }
+        } else {
+            completedDateStr = format(new Date(row.completed_date), 'yyyy-MM-dd');
+        }
+        
+        const key = `${row.task_id}_${completedDateStr}`;
         if (pairSet.has(key)) {
             completionMap.set(key, {
                 id: row.id,
