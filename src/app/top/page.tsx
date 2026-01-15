@@ -7,7 +7,7 @@ import TodoList from '@/components/TodoList';
 import Layout from '@/components/Layout';
 import { createClient } from '@/lib/supabase/client';
 import { DisplayTask } from '@/types/database';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, isSameDay } from 'date-fns';
 
 function TopPageContent() {
     const router = useRouter();
@@ -105,21 +105,58 @@ function TopPageContent() {
 
                 setLoading(true);
                 try {
-                    const [tasksResponse, memorialsResponse] = await Promise.all([
-                        fetch(`/api/tasks?date=${format(selectedDate, 'yyyy-MM-dd')}`),
+                    // 段階的読み込み: まず基本情報のみを取得（高速）
+                    const [tasksBasicResponse, memorialsResponse] = await Promise.all([
+                        fetch(`/api/tasks?date=${format(selectedDate, 'yyyy-MM-dd')}&basic=true`),
                         fetch(`/api/memorials?date=${format(selectedDate, 'yyyy-MM-dd')}`),
                     ]);
                     if (!isMounted) return;
 
-                    if (tasksResponse.ok) {
-                        const tasksData = await tasksResponse.json();
+                    if (tasksBasicResponse.ok) {
+                        const tasksBasicData = await tasksBasicResponse.json();
                         if (isMounted) {
-                            setTasks(tasksData.tasks || []);
-                            // 未完了の過去タスクがある日を設定
-                            if (tasksData.overdueDates) {
-                                setOverdueDates(tasksData.overdueDates.map((d: string) => parseISO(d)));
-                            } else {
-                                setOverdueDates([]);
+                            // 基本情報を先に表示
+                            setTasks(tasksBasicData.tasks || []);
+                            setOverdueDates([]); // 基本情報取得時は過去タスク情報は取得しない
+                        }
+
+                        // バックグラウンドで完了状態を取得して更新
+                        if (tasksBasicData.tasks && tasksBasicData.tasks.length > 0) {
+                            try {
+                                const completionResponse = await fetch('/api/tasks', {
+                                    method: 'PATCH',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        tasks: tasksBasicData.tasks,
+                                        date: format(selectedDate, 'yyyy-MM-dd'),
+                                    }),
+                                });
+                                if (!isMounted) return;
+
+                                if (completionResponse.ok) {
+                                    const completionData = await completionResponse.json();
+                                    if (isMounted) {
+                                        setTasks(completionData.tasks || tasksBasicData.tasks);
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('Failed to load completion status:', error);
+                            }
+                        }
+
+                        // 現在日の場合、未完了の過去タスクがある日を取得（バックグラウンド）
+                        const today = new Date();
+                        if (isSameDay(selectedDate, today)) {
+                            try {
+                                const fullTasksResponse = await fetch(`/api/tasks?date=${format(selectedDate, 'yyyy-MM-dd')}`);
+                                if (isMounted && fullTasksResponse.ok) {
+                                    const fullTasksData = await fullTasksResponse.json();
+                                    if (fullTasksData.overdueDates) {
+                                        setOverdueDates(fullTasksData.overdueDates.map((d: string) => parseISO(d)));
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('Failed to load overdue dates:', error);
                             }
                         }
                     }

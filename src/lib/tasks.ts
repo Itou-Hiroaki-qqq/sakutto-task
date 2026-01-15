@@ -259,6 +259,163 @@ export async function getTasksForDate(
     return displayTasks;
 }
 
+// 指定した日のタスクの基本情報のみを取得（完了状態は含まない、段階的読み込み用）
+export async function getTasksBasicForDate(
+    userId: string,
+    targetDate: Date
+): Promise<DisplayTask[]> {
+    const dateStr = format(targetDate, 'yyyy-MM-dd');
+    const today = startOfDay(new Date());
+    const targetDateStart = startOfDay(targetDate);
+    const isToday = isSameDay(targetDateStart, today);
+
+    // 1. すべてのタスクを取得（繰り返し設定も含む）
+    const tasks = await sql`
+    SELECT 
+        t.id,
+        t.user_id,
+        t.title,
+        t.due_date,
+        t.notification_time,
+        t.created_at,
+        tr.type as recurrence_type,
+        tr.custom_days,
+        tr.custom_unit,
+        tr.weekdays as recurrence_weekdays
+    FROM tasks t
+    LEFT JOIN task_recurrences tr ON t.id = tr.task_id
+    WHERE t.user_id = ${userId}
+    ORDER BY t.created_at ASC
+    `;
+
+    const displayTasks: DisplayTask[] = [];
+
+    // 2. まず、繰り返しタスクのIDを収集して除外日を取得
+    const recurringTaskIds: string[] = [];
+    for (const task of tasks) {
+        if (task.recurrence_type) {
+            recurringTaskIds.push(task.id);
+        }
+    }
+
+    // 3. バッチで除外日を取得（繰り返しタスクのみ）
+    const exclusionsMap = await getTaskExclusionsBatch(recurringTaskIds);
+
+    // 4. 各タスクについて、表示用のタスクリストを作成（完了状態は含まない）
+    for (const task of tasks) {
+        const taskDueDate = new Date(task.due_date);
+        taskDueDate.setHours(0, 0, 0, 0);
+
+        // 4-1. 単発タスク（繰り返しなし）
+        if (!task.recurrence_type) {
+            if (isSameDay(taskDueDate, targetDate)) {
+                displayTasks.push({
+                    id: `single-${task.id}`,
+                    task_id: task.id,
+                    title: task.title,
+                    date: targetDate,
+                    due_date: taskDueDate,
+                    notification_time: task.notification_time || undefined,
+                    completed: false, // デフォルトで未完了
+                    is_recurring: false,
+                    created_at: new Date(task.created_at),
+                });
+            }
+        } else {
+            // 4-2. 繰り返しタスク
+            const exclusions = exclusionsMap.get(task.id) || null;
+            const shouldInclude = shouldIncludeRecurringTaskWithExclusions(
+                task.id,
+                task.recurrence_type,
+                taskDueDate,
+                targetDate,
+                task.custom_days,
+                task.custom_unit,
+                task.recurrence_weekdays,
+                exclusions
+            );
+
+            if (shouldInclude) {
+                displayTasks.push({
+                    id: `recurring-${task.id}-${dateStr}`,
+                    task_id: task.id,
+                    title: task.title,
+                    date: targetDate,
+                    due_date: taskDueDate,
+                    notification_time: task.notification_time || undefined,
+                    completed: false, // デフォルトで未完了
+                    is_recurring: true,
+                    created_at: new Date(task.created_at),
+                });
+            }
+        }
+    }
+
+    // 5. タスクを並び替え（時間表示→繰り返し指定→その他）
+    displayTasks.sort((a, b) => {
+        // 1. タイトルに時間表示が含まれるタスクを最上部に
+        const aHasTime = hasTimeInTitle(a.title);
+        const bHasTime = hasTimeInTitle(b.title);
+
+        if (aHasTime && !bHasTime) return -1;
+        if (!aHasTime && bHasTime) return 1;
+
+        // 両方に時間表示がある場合、時間の順番で並べる
+        if (aHasTime && bHasTime) {
+            const aTime = extractTimeInMinutes(a.title);
+            const bTime = extractTimeInMinutes(b.title);
+            if (aTime !== null && bTime !== null) {
+                return aTime - bTime;
+            }
+            // 時間が抽出できない場合は作成順
+            const aCreated = a.created_at?.getTime() || 0;
+            const bCreated = b.created_at?.getTime() || 0;
+            return aCreated - bCreated;
+        }
+
+        // 2. 繰り返し指定があるタスクを次に
+        if (a.is_recurring && !b.is_recurring) return -1;
+        if (!a.is_recurring && b.is_recurring) return 1;
+
+        // 3. その他のタスクは作成順
+        const aCreated = a.created_at?.getTime() || 0;
+        const bCreated = b.created_at?.getTime() || 0;
+        return aCreated - bCreated;
+    });
+
+    return displayTasks;
+}
+
+// タスクリストに完了状態を更新（段階的読み込み用）
+export async function updateTasksWithCompletionStatus(
+    tasks: DisplayTask[],
+    userId: string,
+    targetDate: Date
+): Promise<DisplayTask[]> {
+    if (tasks.length === 0) {
+        return tasks;
+    }
+
+    const dateStr = format(targetDate, 'yyyy-MM-dd');
+    const completionPairs: Array<{ taskId: string; date: Date }> = tasks.map(task => ({
+        taskId: task.task_id,
+        date: targetDate,
+    }));
+
+    // バッチで完了状態を取得
+    const completionsMap = await getTaskCompletionsBatch(completionPairs);
+
+    // タスクリストに完了状態を反映
+    return tasks.map(task => {
+        const completionKey = `${task.task_id}_${dateStr}`;
+        const completion = completionsMap.get(completionKey);
+        return {
+            ...task,
+            completed: completion?.completed || false,
+        };
+    });
+}
+
 // 未完了の過去タスクがある日を取得（現在日の場合のみ使用、最適化版）
 export async function getOverdueTaskDates(
     userId: string,

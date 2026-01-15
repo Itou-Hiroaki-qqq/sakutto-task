@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getTasksForDate, getOverdueTaskDates, clearTasksCache } from '@/lib/tasks';
+import { getTasksForDate, getTasksBasicForDate, updateTasksWithCompletionStatus, getOverdueTaskDates, clearTasksCache } from '@/lib/tasks';
 import { sql } from '@/lib/db';
 import { isSameDay, startOfDay, format } from 'date-fns';
 
@@ -17,19 +17,28 @@ export async function GET(request: NextRequest) {
 
         const searchParams = request.nextUrl.searchParams;
         const dateStr = searchParams.get('date');
+        const basic = searchParams.get('basic') === 'true';
 
         if (!dateStr) {
             return NextResponse.json({ error: 'Date parameter is required' }, { status: 400 });
         }
 
         const date = new Date(dateStr);
-        const tasks = await getTasksForDate(user.id, date);
+        let tasks;
 
-        // 現在日の場合、未完了の過去タスクがある日を取得
+        if (basic) {
+            // 段階的読み込み: 基本情報のみを返す
+            tasks = await getTasksBasicForDate(user.id, date);
+        } else {
+            // 通常読み込み: 完了状態を含む完全なデータを返す
+            tasks = await getTasksForDate(user.id, date);
+        }
+
+        // 現在日の場合、未完了の過去タスクがある日を取得（基本情報のみの場合は取得しない）
         const today = startOfDay(new Date());
         const targetDate = startOfDay(date);
         let overdueDates: Date[] = [];
-        if (isSameDay(targetDate, today)) {
+        if (!basic && isSameDay(targetDate, today)) {
             overdueDates = await getOverdueTaskDates(user.id, today);
         }
 
@@ -39,6 +48,41 @@ export async function GET(request: NextRequest) {
         });
     } catch (error) {
         console.error('Error fetching tasks:', error);
+        return NextResponse.json(
+            { error: 'Internal server error' },
+            { status: 500 }
+        );
+    }
+}
+
+// 完了状態のみを更新（段階的読み込み用）
+export async function PATCH(request: NextRequest) {
+    try {
+        const supabase = await createClient();
+        const {
+            data: { user },
+        } = await supabase.auth.getUser();
+
+        if (!user) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const body = await request.json();
+        const { tasks, date } = body;
+
+        if (!tasks || !Array.isArray(tasks) || !date) {
+            return NextResponse.json(
+                { error: 'Tasks array and date are required' },
+                { status: 400 }
+            );
+        }
+
+        const targetDate = new Date(date);
+        const updatedTasks = await updateTasksWithCompletionStatus(tasks, user.id, targetDate);
+
+        return NextResponse.json({ tasks: updatedTasks });
+    } catch (error) {
+        console.error('Error updating completion status:', error);
         return NextResponse.json(
             { error: 'Internal server error' },
             { status: 500 }
