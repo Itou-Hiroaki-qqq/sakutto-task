@@ -125,7 +125,7 @@ export default function Header({ currentDate = new Date(), onDateChange }: Heade
                             href="/settings/data"
                             className={pathname === '/settings/data' ? 'active' : ''}
                         >
-                            データ管理
+                            バックアップ関連
                         </Link>
                     </li>
                     <li>
