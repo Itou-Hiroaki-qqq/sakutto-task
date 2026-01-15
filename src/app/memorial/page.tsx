@@ -75,6 +75,22 @@ function MemorialEditPageContent() {
         }
     }, [userId]);
 
+    // URLパラメータが変わった時（編集モードからリストモードに戻った時など）にフォームをリセット
+    useEffect(() => {
+        if (!memorialIdParam) {
+            // memorialIdパラメータがない場合（リストモード）はフォームをリセット
+            setTitle('');
+            setDueDate(initialDate);
+            setNotificationEnabled(false);
+            setNotificationTime('');
+            setYearlyEnabled(false);
+            // リストを再読み込み
+            if (userId) {
+                loadMemorialList();
+            }
+        }
+    }, [memorialIdParam, userId]);
+
     const loadMemorial = async (memorialId: string, userId: string, dateParam?: string | null) => {
         setLoading(true);
         try {
@@ -184,14 +200,17 @@ function MemorialEditPageContent() {
             });
 
             if (response.ok) {
-                // 元のページに戻る（日付パラメータを保持）
-                const returnDate = searchParams.get('date');
-                const returnUrl = searchParams.get('returnUrl') || '/top';
-                if (returnDate) {
-                    router.push(`${returnUrl}?date=${returnDate}`);
-                } else {
-                    router.push(returnUrl);
-                }
+                // 保存成功後、記念日設定ページ（リストページ）に遷移
+                // フォームをリセット
+                setTitle('');
+                setDueDate(initialDate);
+                setNotificationEnabled(false);
+                setNotificationTime('');
+                setYearlyEnabled(false);
+                // 記念日リストを再読み込み
+                await loadMemorialList();
+                // 記念日設定ページ（リストページ）に遷移
+                router.push('/memorial');
             } else {
                 const error = await response.json();
                 console.error('Save error:', error);
@@ -376,13 +395,7 @@ function MemorialEditPageContent() {
                 <div className="container mx-auto px-4 py-4 flex items-center justify-between">
                     <button
                         onClick={() => {
-                            const returnDate = searchParams.get('date');
-                            const returnUrl = searchParams.get('returnUrl') || '/top';
-                            if (returnDate) {
-                                router.push(`${returnUrl}?date=${returnDate}`);
-                            } else {
-                                router.back();
-                            }
+                            router.push('/top');
                         }}
                         className="btn btn-ghost btn-circle"
                     >

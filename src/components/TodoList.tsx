@@ -1,7 +1,7 @@
 'use client';
 
 import { DisplayTask } from '@/types/database';
-import { format } from 'date-fns';
+import { format, isSameDay } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { getHoliday } from '@/lib/holidays';
 import Link from 'next/link';
@@ -96,6 +96,12 @@ function TodoItem({
                     }`}
             >
                 <div className="flex items-center gap-2">
+                    {/* 過去の未完了タスクの警告アイコン */}
+                    {!task.completed && !isSameDay(task.date, task.due_date) && (
+                        <span className="material-icons text-warning text-lg" title="期限を過ぎたタスク">
+                            warning
+                        </span>
+                    )}
                     {task.notification_time && (
                         <span className="badge badge-outline badge-sm">
                             {task.notification_time}
