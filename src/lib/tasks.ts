@@ -1,6 +1,6 @@
 import { sql } from './db';
 import { Task, TaskRecurrence, TaskCompletion, DisplayTask } from '@/types/database';
-import { format, isSameDay, addDays, addWeeks, addMonths, addYears, getDay, add, endOfMonth } from 'date-fns';
+import { format, isSameDay, addDays, addWeeks, addMonths, addYears, getDay, add, endOfMonth, isBefore, startOfDay } from 'date-fns';
 import { extractTimeInMinutes, hasTimeInTitle } from './timeUtils';
 
 // 指定した日のタスクを取得（繰り返し設定を展開して表示用のタスクリストを作成）
@@ -9,6 +9,9 @@ export async function getTasksForDate(
     targetDate: Date
 ): Promise<DisplayTask[]> {
     const dateStr = format(targetDate, 'yyyy-MM-dd');
+    const today = startOfDay(new Date());
+    const targetDateStart = startOfDay(targetDate);
+    const isToday = isSameDay(targetDateStart, today);
 
     // 1. すべてのタスクを取得（繰り返し設定も含む）
     const tasks = await sql`
@@ -30,10 +33,6 @@ export async function getTasksForDate(
     `;
 
     const displayTasks: DisplayTask[] = [];
-    const targetDateStart = new Date(targetDate);
-    targetDateStart.setHours(0, 0, 0, 0);
-    const targetDateEnd = new Date(targetDate);
-    targetDateEnd.setHours(23, 59, 59, 999);
 
     // 2. 各タスクについて、指定日に該当するかチェック
     for (const task of tasks) {
@@ -44,6 +43,14 @@ export async function getTasksForDate(
         if (!task.recurrence_type) {
             if (isSameDay(taskDueDate, targetDate)) {
                 const completion = await getTaskCompletion(task.id, targetDate);
+                const isCompleted = completion?.completed || false;
+                
+                // 過去の日付の未完了タスクは除外（現在日に表示されるため）
+                if (isBefore(targetDateStart, today) && !isCompleted) {
+                    // 過去の未完了タスクは現在日に表示されるため、過去の日からは除外
+                    continue;
+                }
+                
                 displayTasks.push({
                     id: `single-${task.id}`,
                     task_id: task.id,
@@ -51,7 +58,7 @@ export async function getTasksForDate(
                     date: targetDate,
                     due_date: taskDueDate,
                     notification_time: task.notification_time || undefined,
-                    completed: completion?.completed || false,
+                    completed: isCompleted,
                     is_recurring: false,
                     created_at: new Date(task.created_at),
                 });
@@ -70,6 +77,14 @@ export async function getTasksForDate(
 
             if (shouldInclude) {
                 const completion = await getTaskCompletion(task.id, targetDate);
+                const isCompleted = completion?.completed || false;
+                
+                // 過去の日付の未完了タスクは除外（現在日に表示されるため）
+                if (isBefore(targetDateStart, today) && !isCompleted) {
+                    // 過去の未完了タスクは現在日に表示されるため、過去の日からは除外
+                    continue;
+                }
+                
                 displayTasks.push({
                     id: `recurring-${task.id}-${dateStr}`,
                     task_id: task.id,
@@ -77,7 +92,7 @@ export async function getTasksForDate(
                     date: targetDate,
                     due_date: taskDueDate,
                     notification_time: task.notification_time || undefined,
-                    completed: completion?.completed || false,
+                    completed: isCompleted,
                     is_recurring: true,
                     created_at: new Date(task.created_at),
                 });
@@ -85,8 +100,111 @@ export async function getTasksForDate(
         }
     }
 
-    // 3. タスクを並び替え（時間表示→繰り返し指定→その他）
+    // 3. 現在日が選択されている場合、過去の未完了タスクを追加
+    if (isToday) {
+        // すべてのタスクを再度取得して、過去の未完了タスクをチェック
+        for (const task of tasks) {
+            const taskDueDate = new Date(task.due_date);
+            taskDueDate.setHours(0, 0, 0, 0);
+
+            // 過去の日付（今日より前）で、既にdisplayTasksに含まれていないタスクをチェック
+            if (isBefore(taskDueDate, today)) {
+                // 単発タスクの場合
+                if (!task.recurrence_type) {
+                    // 既にdisplayTasksに含まれているかチェック
+                    const alreadyIncluded = displayTasks.some(
+                        dt => dt.task_id === task.id && isSameDay(dt.due_date, taskDueDate)
+                    );
+                    
+                    if (!alreadyIncluded) {
+                        // 過去の日の完了状態をチェック（完了していない場合のみ追加）
+                        const completion = await getTaskCompletion(task.id, taskDueDate);
+                        if (!completion?.completed) {
+                            // 過去のタスクを現在日のリストに追加
+                            displayTasks.push({
+                                id: `overdue-${task.id}-${format(taskDueDate, 'yyyy-MM-dd')}`,
+                                task_id: task.id,
+                                title: task.title,
+                                date: today, // 表示日は現在日
+                                due_date: taskDueDate, // 元の期日は保持
+                                notification_time: task.notification_time || undefined,
+                                completed: false,
+                                is_recurring: false,
+                                created_at: new Date(task.created_at),
+                            });
+                        }
+                    }
+                } else {
+                    // 繰り返しタスクの場合、過去の日付で未完了のタスクをチェック
+                    // 繰り返しタスクの過去の各出現日をチェック（最大30日分チェック）
+                    let checkDate = new Date(taskDueDate);
+                    while (isBefore(checkDate, today)) {
+                        const shouldInclude = await shouldIncludeRecurringTask(
+                            task.id,
+                            task.recurrence_type,
+                            taskDueDate,
+                            checkDate,
+                            task.custom_days,
+                            task.custom_unit,
+                            task.recurrence_weekdays
+                        );
+
+                        if (shouldInclude) {
+                            // 既にdisplayTasksに含まれているかチェック
+                            const alreadyIncluded = displayTasks.some(
+                                dt => dt.task_id === task.id && isSameDay(dt.date, checkDate)
+                            );
+
+                            if (!alreadyIncluded) {
+                                const completion = await getTaskCompletion(task.id, checkDate);
+                                if (!completion?.completed) {
+                                    // 過去のタスクを現在日のリストに追加
+                                    displayTasks.push({
+                                        id: `overdue-recurring-${task.id}-${format(checkDate, 'yyyy-MM-dd')}`,
+                                        task_id: task.id,
+                                        title: task.title,
+                                        date: today, // 表示日は現在日
+                                        due_date: checkDate, // 元の期日は保持
+                                        notification_time: task.notification_time || undefined,
+                                        completed: false,
+                                        is_recurring: true,
+                                        created_at: new Date(task.created_at),
+                                    });
+                                }
+                            }
+                        }
+
+                        // 次の日をチェック（効率化のため、繰り返しタイプに応じて適切に日付を進める）
+                        if (task.recurrence_type === 'daily') {
+                            checkDate = addDays(checkDate, 1);
+                        } else if (task.recurrence_type === 'weekly') {
+                            checkDate = addDays(checkDate, 7);
+                        } else if (task.recurrence_type === 'monthly' || task.recurrence_type === 'monthly_end') {
+                            checkDate = addMonths(checkDate, 1);
+                        } else if (task.recurrence_type === 'yearly') {
+                            checkDate = addYears(checkDate, 1);
+                        } else {
+                            // その他の繰り返しタイプは1日ずつチェック（効率は悪いが確実）
+                            checkDate = addDays(checkDate, 1);
+                        }
+
+                        // 無限ループ防止（最大30日分チェック）
+                        if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > 365) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. タスクを並び替え（時間表示→繰り返し指定→その他、過去のタスクは最後に）
     displayTasks.sort((a, b) => {
+        // 0. 過去の未完了タスク（dateとdue_dateが異なる）を最後に
+        const aIsOverdue = !isSameDay(a.date, a.due_date);
+        const bIsOverdue = !isSameDay(b.date, b.due_date);
+        if (aIsOverdue && !bIsOverdue) return 1;
+        if (!aIsOverdue && bIsOverdue) return -1;
         // 1. タイトルに時間表示が含まれるタスクを最上部に
         const aHasTime = hasTimeInTitle(a.title);
         const bHasTime = hasTimeInTitle(b.title);

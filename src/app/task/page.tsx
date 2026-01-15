@@ -91,18 +91,8 @@ function TaskEditPageContent() {
                 }
                 setTitle(data.task.title || '');
 
-                // 期日の設定: URLパラメータの日付がある場合はそれを使用、なければタスクの期日を使用
-                if (dateParam) {
-                    try {
-                        const parsedDate = parseISO(dateParam);
-                        setDueDate(parsedDate);
-                    } catch (e) {
-                        // パースエラーはタスクの期日を使用
-                        setDueDate(data.task.due_date ? new Date(data.task.due_date) : initialDate);
-                    }
-                } else {
-                    setDueDate(data.task.due_date ? new Date(data.task.due_date) : initialDate);
-                }
+                // 期日の設定: タスクの元の期日を優先して表示（過去の未完了タスクの場合でも元の期日を表示）
+                setDueDate(data.task.due_date ? new Date(data.task.due_date) : initialDate);
 
                 setNotificationEnabled(data.task.notification_enabled || false);
                 setNotificationTime(data.task.notification_time || '');

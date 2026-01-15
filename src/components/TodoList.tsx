@@ -89,7 +89,7 @@ function TodoItem({
                 onChange={handleCheckboxChange}
             />
             <Link
-                href={`/task?taskId=${task.task_id}&date=${format(task.date, 'yyyy-MM-dd')}&returnUrl=${encodeURIComponent('/top')}`}
+                href={`/task?taskId=${task.task_id}&date=${format(isSameDay(task.date, task.due_date) ? task.date : task.due_date, 'yyyy-MM-dd')}&returnUrl=${encodeURIComponent('/top')}`}
                 className={`flex-1 cursor-pointer ${task.completed
                         ? 'line-through text-base-content/50'
                         : 'text-base-content'
