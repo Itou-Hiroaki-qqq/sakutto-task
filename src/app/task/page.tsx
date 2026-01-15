@@ -7,6 +7,7 @@ import { format, parseISO } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import DatePicker from '@/components/DatePicker';
 import { RecurrenceType } from '@/types/database';
+import { clearTasksCache as clearClientTasksCache, isWithinCurrentMonthRange } from '@/lib/tasksCache';
 
 function TaskEditPageContent() {
     const router = useRouter();
@@ -223,6 +224,19 @@ function TaskEditPageContent() {
             });
 
             if (response.ok) {
+                // キャッシュを無効化（現在日±1ヶ月の範囲の場合）
+                if (userId) {
+                    const taskDate = parseISO(format(dueDate, 'yyyy-MM-dd'));
+                    if (isWithinCurrentMonthRange(taskDate)) {
+                        // 繰り返しタスクの場合は全体をクリア、単発タスクの場合は該当日のみ
+                        if (recurrenceType) {
+                            clearClientTasksCache(userId); // 全体をクリア（繰り返しタスクは複数日に影響するため）
+                        } else {
+                            clearClientTasksCache(userId, format(dueDate, 'yyyy-MM-dd')); // 該当日のみクリア
+                        }
+                    }
+                }
+                
                 // 元のページに戻る（日付パラメータを保持）
                 const returnDate = searchParams.get('date');
                 const returnUrl = searchParams.get('returnUrl') || '/top';
@@ -322,6 +336,19 @@ function TaskEditPageContent() {
             });
 
             if (response.ok) {
+                // キャッシュを無効化（現在日±1ヶ月の範囲の場合）
+                if (userId) {
+                    const taskDate = parseISO(format(dueDate, 'yyyy-MM-dd'));
+                    if (isWithinCurrentMonthRange(taskDate)) {
+                        // 繰り返しタスクの場合は全体をクリア、単発タスクの場合は該当日のみ
+                        if (hasRecurrence) {
+                            clearClientTasksCache(userId); // 全体をクリア（繰り返しタスクは複数日に影響するため）
+                        } else {
+                            clearClientTasksCache(userId, format(dueDate, 'yyyy-MM-dd')); // 該当日のみクリア
+                        }
+                    }
+                }
+                
                 // 元のページに戻る（日付パラメータを保持）
                 const returnDate = searchParams.get('date');
                 const returnUrl = searchParams.get('returnUrl') || '/top';

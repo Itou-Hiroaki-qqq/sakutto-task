@@ -7,7 +7,13 @@ import TodoList from '@/components/TodoList';
 import Layout from '@/components/Layout';
 import { createClient } from '@/lib/supabase/client';
 import { DisplayTask } from '@/types/database';
-import { format, parseISO, isSameDay } from 'date-fns';
+import { format, parseISO, isSameDay, addMonths, subMonths } from 'date-fns';
+import {
+    getCachedTasksForDate,
+    updateTasksCache,
+    clearTasksCache,
+    isWithinCurrentMonthRange,
+} from '@/lib/tasksCache';
 
 function TopPageContent() {
     const router = useRouter();
@@ -96,6 +102,47 @@ function TopPageContent() {
         }
     }, [searchParams]);
 
+    // 1ヶ月分のデータを事前取得（バックグラウンド）
+    useEffect(() => {
+        if (!userId) return;
+
+        let isMounted = true;
+
+        const prefetchMonthRange = async () => {
+            try {
+                const today = new Date();
+                const centerDate = format(today, 'yyyy-MM-dd');
+                
+                // キャッシュをチェック（既にキャッシュがある場合はスキップ）
+                const cached = getCachedTasksForDate(userId, today);
+                if (cached !== null) {
+                    // キャッシュが存在するので、事前取得をスキップ
+                    return;
+                }
+
+                // バックグラウンドで1ヶ月分を取得
+                const response = await fetch(`/api/tasks/range?centerDate=${centerDate}`);
+                if (!isMounted || !response.ok) return;
+
+                const data = await response.json();
+                if (!isMounted) return;
+
+                // キャッシュに保存
+                updateTasksCache(userId, data.tasks, data.startDate, data.endDate);
+            } catch (error) {
+                console.error('Failed to prefetch month range:', error);
+            }
+        };
+
+        // 少し遅延させて実行（初期表示を優先）
+        const timeoutId = setTimeout(prefetchMonthRange, 500);
+
+        return () => {
+            isMounted = false;
+            clearTimeout(timeoutId);
+        };
+    }, [userId]);
+
     useEffect(() => {
         if (userId) {
             let isMounted = true;
@@ -104,20 +151,65 @@ function TopPageContent() {
                 if (!userId) return;
 
                 setLoading(true);
+                const dateStr = format(selectedDate, 'yyyy-MM-dd');
+                
                 try {
-                    // 段階的読み込み: まず基本情報のみを取得（高速）
+                    // 現在日±1ヶ月の範囲内かチェック
+                    const isInRange = isWithinCurrentMonthRange(selectedDate);
+                    
+                    // キャッシュから取得を試行（範囲内の場合のみ）
+                    if (isInRange) {
+                        const cachedTasks = getCachedTasksForDate(userId, selectedDate);
+                        if (cachedTasks !== null) {
+                            // キャッシュから即座に表示
+                            if (isMounted) {
+                                setTasks(cachedTasks);
+                                setLoading(false);
+                            }
+                            
+                            // 記念日は別途取得
+                            try {
+                                const memorialsResponse = await fetch(`/api/memorials?date=${dateStr}`);
+                                if (isMounted && memorialsResponse.ok) {
+                                    const memorialsData = await memorialsResponse.json();
+                                    setMemorials(memorialsData.memorials || []);
+                                }
+                            } catch (error) {
+                                console.error('Failed to load memorials:', error);
+                            }
+
+                            // 現在日の場合、未完了の過去タスクがある日を取得（バックグラウンド）
+                            const today = new Date();
+                            if (isSameDay(selectedDate, today)) {
+                                try {
+                                    const fullTasksResponse = await fetch(`/api/tasks?date=${dateStr}`);
+                                    if (isMounted && fullTasksResponse.ok) {
+                                        const fullTasksData = await fullTasksResponse.json();
+                                        if (fullTasksData.overdueDates) {
+                                            setOverdueDates(fullTasksData.overdueDates.map((d: string) => parseISO(d)));
+                                        }
+                                    }
+                                } catch (error) {
+                                    console.error('Failed to load overdue dates:', error);
+                                }
+                            }
+                            
+                            return;
+                        }
+                    }
+
+                    // キャッシュがない、または範囲外の場合はAPIから取得
                     const [tasksBasicResponse, memorialsResponse] = await Promise.all([
-                        fetch(`/api/tasks?date=${format(selectedDate, 'yyyy-MM-dd')}&basic=true`),
-                        fetch(`/api/memorials?date=${format(selectedDate, 'yyyy-MM-dd')}`),
+                        fetch(`/api/tasks?date=${dateStr}&basic=true`),
+                        fetch(`/api/memorials?date=${dateStr}`),
                     ]);
                     if (!isMounted) return;
 
                     if (tasksBasicResponse.ok) {
                         const tasksBasicData = await tasksBasicResponse.json();
                         if (isMounted) {
-                            // 基本情報を先に表示
                             setTasks(tasksBasicData.tasks || []);
-                            setOverdueDates([]); // 基本情報取得時は過去タスク情報は取得しない
+                            setOverdueDates([]);
                         }
 
                         // バックグラウンドで完了状態を取得して更新
@@ -128,7 +220,7 @@ function TopPageContent() {
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({
                                         tasks: tasksBasicData.tasks,
-                                        date: format(selectedDate, 'yyyy-MM-dd'),
+                                        date: dateStr,
                                     }),
                                 });
                                 if (!isMounted) return;
@@ -137,26 +229,20 @@ function TopPageContent() {
                                     const completionData = await completionResponse.json();
                                     if (isMounted) {
                                         setTasks(completionData.tasks || tasksBasicData.tasks);
+                                        
+                                        // 範囲内の場合はキャッシュに保存
+                                        if (isInRange) {
+                                            updateTasksCache(
+                                                userId,
+                                                { [dateStr]: completionData.tasks },
+                                                format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
+                                                format(addMonths(selectedDate, 1), 'yyyy-MM-dd')
+                                            );
+                                        }
                                     }
                                 }
                             } catch (error) {
                                 console.error('Failed to load completion status:', error);
-                            }
-                        }
-
-                        // 現在日の場合、未完了の過去タスクがある日を取得（バックグラウンド）
-                        const today = new Date();
-                        if (isSameDay(selectedDate, today)) {
-                            try {
-                                const fullTasksResponse = await fetch(`/api/tasks?date=${format(selectedDate, 'yyyy-MM-dd')}`);
-                                if (isMounted && fullTasksResponse.ok) {
-                                    const fullTasksData = await fullTasksResponse.json();
-                                    if (fullTasksData.overdueDates) {
-                                        setOverdueDates(fullTasksData.overdueDates.map((d: string) => parseISO(d)));
-                                    }
-                                }
-                            } catch (error) {
-                                console.error('Failed to load overdue dates:', error);
                             }
                         }
                     }
@@ -165,6 +251,22 @@ function TopPageContent() {
                         const memorialsData = await memorialsResponse.json();
                         if (isMounted) {
                             setMemorials(memorialsData.memorials || []);
+                        }
+                    }
+
+                    // 現在日の場合、未完了の過去タスクがある日を取得（バックグラウンド）
+                    const today = new Date();
+                    if (isSameDay(selectedDate, today)) {
+                        try {
+                            const fullTasksResponse = await fetch(`/api/tasks?date=${dateStr}`);
+                            if (isMounted && fullTasksResponse.ok) {
+                                const fullTasksData = await fullTasksResponse.json();
+                                if (fullTasksData.overdueDates) {
+                                    setOverdueDates(fullTasksData.overdueDates.map((d: string) => parseISO(d)));
+                                }
+                            }
+                        } catch (error) {
+                            console.error('Failed to load overdue dates:', error);
                         }
                     }
                 } catch (error) {
@@ -199,12 +301,30 @@ function TopPageContent() {
     const handleToggleCompletion = async (taskId: string, completed: boolean) => {
         if (!userId) return;
 
+        const dateStr = format(selectedDate, 'yyyy-MM-dd');
+
         // 楽観的UI更新
         setTasks((prevTasks) =>
             prevTasks.map((task) =>
                 task.task_id === taskId ? { ...task, completed } : task
             )
         );
+
+        // キャッシュも即座に更新（範囲内の場合）
+        if (isWithinCurrentMonthRange(selectedDate)) {
+            const cachedTasks = getCachedTasksForDate(userId, selectedDate);
+            if (cachedTasks) {
+                const updatedTasks = cachedTasks.map((task) =>
+                    task.task_id === taskId ? { ...task, completed } : task
+                );
+                updateTasksCache(
+                    userId,
+                    { [dateStr]: updatedTasks },
+                    format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
+                    format(addMonths(selectedDate, 1), 'yyyy-MM-dd')
+                );
+            }
+        }
 
         try {
             // サーバーに送信
@@ -213,13 +333,30 @@ function TopPageContent() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     taskId,
-                    date: format(selectedDate, 'yyyy-MM-dd'),
+                    date: dateStr,
                     completed,
                 }),
             });
 
             if (!response.ok) {
                 throw new Error('Failed to update completion status');
+            }
+
+            // 成功後、最新データでキャッシュを更新
+            if (isWithinCurrentMonthRange(selectedDate)) {
+                const updatedTasksResponse = await fetch(`/api/tasks?date=${dateStr}`);
+                if (updatedTasksResponse.ok) {
+                    const updatedData = await updatedTasksResponse.json();
+                    if (updatedData.tasks) {
+                        updateTasksCache(
+                            userId,
+                            { [dateStr]: updatedData.tasks },
+                            format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
+                            format(addMonths(selectedDate, 1), 'yyyy-MM-dd')
+                        );
+                        setTasks(updatedData.tasks);
+                    }
+                }
             }
         } catch (error) {
             console.error('Failed to toggle completion:', error);
@@ -229,6 +366,11 @@ function TopPageContent() {
                     task.task_id === taskId ? { ...task, completed: !completed } : task
                 )
             );
+            
+            // キャッシュも元に戻す
+            if (isWithinCurrentMonthRange(selectedDate)) {
+                clearTasksCache(userId, dateStr);
+            }
         }
     };
 

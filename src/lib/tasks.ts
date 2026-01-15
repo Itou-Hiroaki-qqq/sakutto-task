@@ -16,7 +16,7 @@ const tasksCache = new Map<string, CacheEntry<DisplayTask[]>>();
 const completionCache = new Map<string, CacheEntry<TaskCompletion | null>>();
 
 // キャッシュの有効期限（ミリ秒）
-const CACHE_TTL = 30 * 1000; // 30秒
+const CACHE_TTL = 5 * 60 * 1000; // 5分（パフォーマンス向上のため延長）
 
 // キャッシュから値を取得（有効期限内の場合のみ）
 function getCached<T>(cache: Map<string, CacheEntry<T>>, key: string): T | null {
@@ -257,6 +257,41 @@ export async function getTasksForDate(
     setCached(tasksCache, cacheKey, displayTasks);
 
     return displayTasks;
+}
+
+// 日付範囲を指定してタスクを取得（複数日分を一度に取得）
+export async function getTasksForDateRange(
+    userId: string,
+    startDate: Date,
+    endDate: Date
+): Promise<Map<string, DisplayTask[]>> {
+    // 結果を日付ごとにまとめるMap（キー: 'YYYY-MM-DD', 値: DisplayTask[]）
+    const tasksByDate = new Map<string, DisplayTask[]>();
+    
+    // 範囲内のすべての日付を生成
+    const dates: Date[] = [];
+    let currentDate = new Date(startDate);
+    currentDate.setHours(0, 0, 0, 0);
+    const endDateNormalized = new Date(endDate);
+    endDateNormalized.setHours(23, 59, 59, 999);
+    
+    while (currentDate <= endDateNormalized) {
+        dates.push(new Date(currentDate));
+        currentDate = addDays(currentDate, 1);
+    }
+    
+    // 各日付についてタスクを取得（既存の関数を再利用）
+    // ただし、キャッシュを活用するため、並列で実行
+    const tasksPromises = dates.map(date => getTasksForDate(userId, date));
+    const tasksArrays = await Promise.all(tasksPromises);
+    
+    // 結果をMapにまとめる
+    dates.forEach((date, index) => {
+        const dateStr = format(date, 'yyyy-MM-dd');
+        tasksByDate.set(dateStr, tasksArrays[index]);
+    });
+    
+    return tasksByDate;
 }
 
 // 指定した日のタスクの基本情報のみを取得（完了状態は含まない、段階的読み込み用）
