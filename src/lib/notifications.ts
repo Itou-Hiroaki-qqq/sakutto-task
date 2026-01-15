@@ -35,7 +35,16 @@ export async function getTasksToNotify(
         notificationTime: string;
     }>
 > {
-    console.log(`[Notification] Getting tasks to notify for date ${targetDate.toISOString().split('T')[0]} at time ${targetTime}`);
+    const targetDateStr = targetDate.toISOString().split('T')[0];
+    console.log(`[Notification] Getting tasks to notify for date ${targetDateStr} at time ${targetTime}`);
+    console.log(`[Notification] Target date details:`, {
+        targetDateISO: targetDate.toISOString(),
+        targetDateStr,
+        targetTime,
+        targetDateYear: targetDate.getFullYear(),
+        targetDateMonth: targetDate.getMonth() + 1,
+        targetDateDay: targetDate.getDate()
+    });
     
     // 指定時刻に通知が必要なタスクをすべて取得
     // 注意: notification_timeは文字列型なので、トリムして比較
@@ -145,7 +154,15 @@ export async function getTasksToNotify(
 
         // 単発タスク（繰り返しなし）
         if (!task.recurrence_type) {
-            if (isSameDay(taskDueDate, targetDate)) {
+            const isMatchingDate = isSameDay(taskDueDate, targetDate);
+            console.log(`[Notification] Checking single task ${task.task_id}: "${task.title}"`, {
+                taskDueDate: taskDueDate.toISOString().split('T')[0],
+                targetDate: targetDateNormalized.toISOString().split('T')[0],
+                isMatchingDate,
+                notificationTime: task.notification_time
+            });
+            
+            if (isMatchingDate) {
                 console.log(`[Notification] Including single task ${task.task_id}: "${task.title}" on ${taskDueDate.toISOString().split('T')[0]}`);
                 result.push({
                     taskId: task.task_id,
@@ -353,8 +370,9 @@ export async function sendNotificationsForDateTime(
     let emailCount = 0;
     let webPushCount = 0;
 
-    for (const task of tasks) {
-        console.log(`[Notification] Processing task ${task.taskId} for user ${task.userId}: "${task.title}"`);
+    for (let i = 0; i < tasks.length; i++) {
+        const task = tasks[i];
+        console.log(`[Notification] Processing task ${i + 1}/${tasks.length}: ${task.taskId} for user ${task.userId}: "${task.title}"`);
         
         // ユーザーの通知設定を取得
         const settings = await sql`
@@ -374,7 +392,12 @@ export async function sendNotificationsForDateTime(
 
         // メール通知を送信
         // 注意: SQLクエリで既に時刻でフィルタリングされているので、重複チェックは不要
+        // Resendのレート制限（2リクエスト/秒）に対応するため、前のメール送信から0.6秒待機
         if (setting.email_notification_enabled && setting.email) {
+            if (i > 0) {
+                // 2つ目以降のメール送信の前に待機（レート制限対策）
+                await new Promise(resolve => setTimeout(resolve, 600)); // 0.6秒待機
+            }
             console.log(`[Notification] Sending email notification to ${setting.email} for task "${task.title}"`);
             const emailResult = await sendEmailNotification(
                 setting.email,
@@ -391,6 +414,12 @@ export async function sendNotificationsForDateTime(
                     : `Failed to send email to user ${task.userId} for task ${task.taskId}`;
                 errors.push(errorMsg);
                 console.error(`[Notification] ${errorMsg}`);
+                
+                // レート制限エラーの場合は、次のメール送信まで長めに待機
+                if (emailResult.error && emailResult.error.includes('rate_limit')) {
+                    console.log(`[Notification] Rate limit detected, waiting 1 second before next email...`);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
             }
         } else {
             if (!setting.email_notification_enabled) {

@@ -50,9 +50,26 @@ export async function GET(request: NextRequest) {
 
         // 各時刻について通知を送信
         const results = await Promise.all(
-            timeChecks.map(async ({ date, time }) => {
-                console.log(`[Cron] Sending notifications for ${format(date, 'yyyy-MM-dd')} ${time}`);
-                return await sendNotificationsForDateTime(date, time);
+            timeChecks.map(async ({ date, time }, index) => {
+                const dateStr = format(date, 'yyyy-MM-dd');
+                console.log(`[Cron] [${index + 1}/${timeChecks.length}] Sending notifications for ${dateStr} ${time}`);
+                console.log(`[Cron] [${index + 1}/${timeChecks.length}] Date object details:`, {
+                    dateISO: date.toISOString(),
+                    dateStr,
+                    time,
+                    year: date.getFullYear(),
+                    month: date.getMonth() + 1,
+                    day: date.getDate(),
+                    hour: date.getHours(),
+                    minute: date.getMinutes()
+                });
+                const result = await sendNotificationsForDateTime(date, time);
+                console.log(`[Cron] [${index + 1}/${timeChecks.length}] Result for ${dateStr} ${time}:`, {
+                    emailCount: result.emailCount,
+                    webPushCount: result.webPushCount,
+                    errorsCount: result.errors.length
+                });
+                return result;
             })
         );
         
