@@ -121,6 +121,14 @@ export default function Header({ currentDate = new Date(), onDateChange }: Heade
                         </Link>
                     </li>
                     <li>
+                        <Link
+                            href="/settings/data"
+                            className={pathname === '/settings/data' ? 'active' : ''}
+                        >
+                            データ管理
+                        </Link>
+                    </li>
+                    <li>
                         <button onClick={handleLogout}>ログアウト</button>
                     </li>
                 </ul>
