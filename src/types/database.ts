@@ -36,6 +36,7 @@ export interface TaskCompletion {
     completed_date: Date;
     completed: boolean;
     created_at: Date;
+    updated_at?: Date;
 }
 
 // 日本の祝日情報（カレンダー表示用）

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sql } from '@/lib/db';
 import { parseISO, isBefore } from 'date-fns';
+import { clearTasksCache } from '@/lib/tasks';
 
 export async function GET(
     request: NextRequest,
@@ -134,6 +135,9 @@ export async function DELETE(
             await sql`DELETE FROM task_recurrences WHERE task_id = ${taskId}`;
             await sql`DELETE FROM tasks WHERE id = ${taskId} AND user_id = ${user.id}`;
             
+            // キャッシュをクリア
+            clearTasksCache(user.id, taskId);
+            
             return NextResponse.json({ success: true, message: 'タスクを削除しました' });
         }
 
@@ -162,6 +166,9 @@ export async function DELETE(
                 ON CONFLICT (task_id, excluded_date, exclusion_type) DO NOTHING
             `;
             
+            // キャッシュをクリア
+            clearTasksCache(user.id, taskId);
+            
             return NextResponse.json({ success: true, message: 'このタスクを削除しました' });
         } else if (deleteOption === 'future_all') {
             // 「これ以降の繰り返しタスクすべてを削除」: 指定日以降のタスクを除外（前日までのタスクは残す）
@@ -176,6 +183,9 @@ export async function DELETE(
                 VALUES (${taskId}, ${targetDate}, 'after')
                 ON CONFLICT (task_id, excluded_date, exclusion_type) DO NOTHING
             `;
+            
+            // キャッシュをクリア
+            clearTasksCache(user.id, taskId);
             
             return NextResponse.json({ success: true, message: 'これ以降の繰り返しタスクをすべて削除しました' });
         } else {

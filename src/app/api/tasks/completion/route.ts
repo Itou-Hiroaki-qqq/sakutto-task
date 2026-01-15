@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { toggleTaskCompletion } from '@/lib/tasks';
+import { toggleTaskCompletion, clearTasksCache } from '@/lib/tasks';
 
 export async function POST(request: NextRequest) {
     try {

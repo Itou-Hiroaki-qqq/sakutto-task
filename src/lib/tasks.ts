@@ -3,12 +3,94 @@ import { Task, TaskRecurrence, TaskCompletion, DisplayTask } from '@/types/datab
 import { format, isSameDay, addDays, addWeeks, addMonths, addYears, getDay, add, endOfMonth, isBefore, startOfDay, parseISO } from 'date-fns';
 import { extractTimeInMinutes, hasTimeInTitle } from './timeUtils';
 
+// キャッシュの型定義
+interface CacheEntry<T> {
+    data: T;
+    timestamp: number;
+}
+
+// タスクリストのキャッシュ（userId_date をキー）
+const tasksCache = new Map<string, CacheEntry<DisplayTask[]>>();
+
+// 完了状態のキャッシュ（taskId_date をキー）
+const completionCache = new Map<string, CacheEntry<TaskCompletion | null>>();
+
+// キャッシュの有効期限（ミリ秒）
+const CACHE_TTL = 30 * 1000; // 30秒
+
+// キャッシュから値を取得（有効期限内の場合のみ）
+function getCached<T>(cache: Map<string, CacheEntry<T>>, key: string): T | null {
+    const entry = cache.get(key);
+    if (!entry) {
+        return null;
+    }
+    
+    const now = Date.now();
+    if (now - entry.timestamp > CACHE_TTL) {
+        cache.delete(key);
+        return null;
+    }
+    
+    return entry.data;
+}
+
+// キャッシュに値を設定
+function setCached<T>(cache: Map<string, CacheEntry<T>>, key: string, data: T): void {
+    cache.set(key, {
+        data,
+        timestamp: Date.now(),
+    });
+}
+
+// キャッシュをクリア（特定のユーザーID、または特定のタスクIDに関連するキャッシュをクリア）
+export function clearTasksCache(userId?: string, taskId?: string): void {
+    if (userId) {
+        // 特定ユーザーのタスクリストキャッシュをクリア
+        const keysToDelete: string[] = [];
+        for (const key of tasksCache.keys()) {
+            if (key.startsWith(`${userId}_`)) {
+                keysToDelete.push(key);
+            }
+        }
+        for (const key of keysToDelete) {
+            tasksCache.delete(key);
+        }
+    } else {
+        // すべてのタスクリストキャッシュをクリア
+        tasksCache.clear();
+    }
+    
+    if (taskId) {
+        // 特定タスクの完了状態キャッシュをクリア
+        const keysToDelete: string[] = [];
+        for (const key of completionCache.keys()) {
+            if (key.startsWith(`${taskId}_`)) {
+                keysToDelete.push(key);
+            }
+        }
+        for (const key of keysToDelete) {
+            completionCache.delete(key);
+        }
+    } else {
+        // すべての完了状態キャッシュをクリア
+        completionCache.clear();
+    }
+}
+
 // 指定した日のタスクを取得（繰り返し設定を展開して表示用のタスクリストを作成）
 export async function getTasksForDate(
     userId: string,
     targetDate: Date
 ): Promise<DisplayTask[]> {
     const dateStr = format(targetDate, 'yyyy-MM-dd');
+    const cacheKey = `${userId}_${dateStr}`;
+    
+    // キャッシュから取得を試みる
+    const cached = getCached(tasksCache, cacheKey);
+    if (cached !== null) {
+        return cached;
+    }
+    
     const today = startOfDay(new Date());
     const targetDateStart = startOfDay(targetDate);
     const isToday = isSameDay(targetDateStart, today);
@@ -170,6 +252,9 @@ export async function getTasksForDate(
         const bCreated = b.created_at?.getTime() || 0;
         return aCreated - bCreated;
     });
+
+    // キャッシュに保存
+    setCached(tasksCache, cacheKey, displayTasks);
 
     return displayTasks;
 }
@@ -483,48 +568,84 @@ async function getTaskCompletionsBatch(
         return new Map();
     }
 
-    // OR条件を使ってバッチ取得（NeonのSQLタグではUNNESTが使いにくいため）
-    // ペアが多い場合は、IN句を使ってtask_idを絞り込んでからフィルタリング
-    const taskIds = [...new Set(taskIdDatePairs.map(p => p.taskId))];
-    const dateStrs = [...new Set(taskIdDatePairs.map(p => format(p.date, 'yyyy-MM-dd')))];
-    
-    // まず、該当するtask_idとdateの範囲で取得
-    const allCompletions = await sql`
-    SELECT * FROM task_completions
-    WHERE task_id = ANY(${taskIds})
-      AND completed_date = ANY(${dateStrs})
-    `;
-
-    // ペアのSetを作成して高速検索
-    const pairSet = new Set(taskIdDatePairs.map(p => `${p.taskId}_${format(p.date, 'yyyy-MM-dd')}`));
-
     const completionMap = new Map<string, TaskCompletion>();
-    for (const row of allCompletions as any[]) {
-        // completed_dateをyyyy-MM-dd形式の文字列に変換
-        let completedDateStr: string;
-        if (row.completed_date instanceof Date) {
-            completedDateStr = format(row.completed_date, 'yyyy-MM-dd');
-        } else if (typeof row.completed_date === 'string') {
-            // 既にyyyy-MM-dd形式の場合はそのまま、そうでない場合は変換
-            if (/^\d{4}-\d{2}-\d{2}$/.test(row.completed_date)) {
-                completedDateStr = row.completed_date;
+    const pairsToFetch: Array<{ taskId: string; date: Date }> = [];
+
+    // まずキャッシュから取得を試みる
+    for (const pair of taskIdDatePairs) {
+        const dateStr = format(pair.date, 'yyyy-MM-dd');
+        const cacheKey = `${pair.taskId}_${dateStr}`;
+        const cached = getCached(completionCache, cacheKey);
+        
+        if (cached !== null) {
+            // キャッシュヒット
+            if (cached !== undefined) {
+                const mapKey = `${pair.taskId}_${dateStr}`;
+                completionMap.set(mapKey, cached);
+            }
+        } else {
+            // キャッシュミス: データベースから取得する必要がある
+            pairsToFetch.push(pair);
+        }
+    }
+
+    // キャッシュミスしたペアだけをデータベースから取得
+    if (pairsToFetch.length > 0) {
+        const taskIds = [...new Set(pairsToFetch.map(p => p.taskId))];
+        const dateStrs = [...new Set(pairsToFetch.map(p => format(p.date, 'yyyy-MM-dd')))];
+        
+        // まず、該当するtask_idとdateの範囲で取得
+        const allCompletions = await sql`
+        SELECT * FROM task_completions
+        WHERE task_id = ANY(${taskIds})
+          AND completed_date = ANY(${dateStrs})
+        `;
+
+        // ペアのSetを作成して高速検索
+        const pairSet = new Set(pairsToFetch.map(p => `${p.taskId}_${format(p.date, 'yyyy-MM-dd')}`));
+
+        for (const row of allCompletions as any[]) {
+            // completed_dateをyyyy-MM-dd形式の文字列に変換
+            let completedDateStr: string;
+            if (row.completed_date instanceof Date) {
+                completedDateStr = format(row.completed_date, 'yyyy-MM-dd');
+            } else if (typeof row.completed_date === 'string') {
+                // 既にyyyy-MM-dd形式の場合はそのまま、そうでない場合は変換
+                if (/^\d{4}-\d{2}-\d{2}$/.test(row.completed_date)) {
+                    completedDateStr = row.completed_date;
+                } else {
+                    completedDateStr = format(new Date(row.completed_date), 'yyyy-MM-dd');
+                }
             } else {
                 completedDateStr = format(new Date(row.completed_date), 'yyyy-MM-dd');
             }
-        } else {
-            completedDateStr = format(new Date(row.completed_date), 'yyyy-MM-dd');
+            
+            const key = `${row.task_id}_${completedDateStr}`;
+            if (pairSet.has(key)) {
+                const completion: TaskCompletion = {
+                    id: row.id,
+                    task_id: row.task_id,
+                    completed_date: new Date(row.completed_date),
+                    completed: row.completed,
+                    created_at: new Date(row.created_at),
+                    updated_at: row.updated_at ? new Date(row.updated_at) : new Date(row.created_at),
+                };
+                
+                completionMap.set(key, completion);
+                
+                // キャッシュに保存
+                setCached(completionCache, key, completion);
+            }
         }
-        
-        const key = `${row.task_id}_${completedDateStr}`;
-        if (pairSet.has(key)) {
-            completionMap.set(key, {
-                id: row.id,
-                task_id: row.task_id,
-                completed_date: new Date(row.completed_date),
-                completed: row.completed,
-                created_at: new Date(row.created_at),
-                updated_at: row.updated_at ? new Date(row.updated_at) : new Date(row.created_at),
-            } as TaskCompletion);
+
+        // データベースに存在しない完了状態（null）もキャッシュに保存
+        for (const pair of pairsToFetch) {
+            const dateStr = format(pair.date, 'yyyy-MM-dd');
+            const mapKey = `${pair.taskId}_${dateStr}`;
+            if (!completionMap.has(mapKey)) {
+                const cacheKey = `${pair.taskId}_${dateStr}`;
+                setCached(completionCache, cacheKey, null);
+            }
         }
     }
 
@@ -574,6 +695,8 @@ export async function toggleTaskCompletion(
     LIMIT 1
     `;
 
+    let completion: TaskCompletion;
+    
     if (existing.length > 0) {
         // 更新
         await sql`
@@ -581,12 +704,41 @@ export async function toggleTaskCompletion(
         SET completed = ${completed}, updated_at = CURRENT_TIMESTAMP
         WHERE task_id = ${taskId} AND completed_date = ${dateStr}
     `;
+        
+        const row = existing[0] as any;
+        completion = {
+            id: row.id,
+            task_id: taskId,
+            completed_date: new Date(dateStr),
+            completed: completed,
+            created_at: new Date(row.created_at),
+            updated_at: new Date(),
+        };
     } else {
         // 新規作成
-        await sql`
+        const result = await sql`
         INSERT INTO task_completions (task_id, completed_date, completed)
         VALUES (${taskId}, ${dateStr}, ${completed})
+        RETURNING *
     `;
+        
+        const row = result[0] as any;
+        completion = {
+            id: row.id,
+            task_id: taskId,
+            completed_date: new Date(row.completed_date),
+            completed: completed,
+            created_at: new Date(row.created_at),
+            updated_at: row.updated_at ? new Date(row.updated_at) : new Date(row.created_at),
+        };
     }
+
+    // 完了状態のキャッシュを更新
+    const cacheKey = `${taskId}_${dateStr}`;
+    setCached(completionCache, cacheKey, completion);
+    
+    // 該当するタスクリストのキャッシュをクリア（ユーザーIDが不明なため、すべてのキャッシュをクリア）
+    // より効率的にするには、ユーザーIDも引数で受け取る必要があるが、互換性を保つため現状はすべてクリア
+    tasksCache.clear();
 }
 

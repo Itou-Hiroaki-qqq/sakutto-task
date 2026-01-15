@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getTasksForDate, getOverdueTaskDates } from '@/lib/tasks';
+import { getTasksForDate, getOverdueTaskDates, clearTasksCache } from '@/lib/tasks';
 import { sql } from '@/lib/db';
 import { isSameDay, startOfDay, format } from 'date-fns';
 
@@ -99,6 +99,9 @@ export async function POST(request: NextRequest) {
         `;
         }
 
+        // キャッシュをクリア
+        clearTasksCache(user.id);
+
         return NextResponse.json({ success: true, taskId });
     } catch (error: any) {
         console.error('Error creating task:', error);
@@ -174,6 +177,9 @@ export async function PUT(request: NextRequest) {
                 DELETE FROM task_recurrences WHERE task_id = ${taskId}
             `;
         }
+
+        // キャッシュをクリア
+        clearTasksCache(user.id, taskId);
 
         return NextResponse.json({ success: true });
     } catch (error: any) {
