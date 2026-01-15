@@ -259,7 +259,7 @@ export async function getTasksForDate(
     return displayTasks;
 }
 
-// 未完了の過去タスクがある日を取得（現在日の場合のみ使用）
+// 未完了の過去タスクがある日を取得（現在日の場合のみ使用、最適化版）
 export async function getOverdueTaskDates(
     userId: string,
     today: Date
@@ -286,8 +286,8 @@ export async function getOverdueTaskDates(
 
     const overdueCompletionPairs: Array<{ taskId: string; date: Date }> = [];
     const recurringTaskIds: string[] = [];
-    const overdueDatesSet = new Set<string>();
 
+    // まず、過去の単発タスクを収集
     for (const task of tasks) {
         const taskDueDate = new Date(task.due_date);
         taskDueDate.setHours(0, 0, 0, 0);
@@ -303,10 +303,10 @@ export async function getOverdueTaskDates(
         }
     }
 
-    // 除外日をバッチ取得
+    // 除外日をバッチ取得（繰り返しタスクのみ）
     const exclusionsMap = await getTaskExclusionsBatch(recurringTaskIds);
 
-    // 繰り返しタスクの過去の出現日をチェック
+    // 繰り返しタスクの過去の出現日を効率的にチェック
     for (const task of tasks) {
         const taskDueDate = new Date(task.due_date);
         taskDueDate.setHours(0, 0, 0, 0);
@@ -314,40 +314,36 @@ export async function getOverdueTaskDates(
         if (isBefore(taskDueDate, todayStart) && task.recurrence_type) {
             const exclusions = exclusionsMap.get(task.id) || null;
             
-            let checkDate = new Date(taskDueDate);
-            while (isBefore(checkDate, todayStart)) {
-                const shouldInclude = shouldIncludeRecurringTaskWithExclusions(
-                    task.id,
-                    task.recurrence_type,
-                    taskDueDate,
-                    checkDate,
-                    task.custom_days,
-                    task.custom_unit,
-                    task.recurrence_weekdays,
-                    exclusions
-                );
-
-                if (shouldInclude) {
-                    overdueCompletionPairs.push({ taskId: task.id, date: new Date(checkDate) });
+            // 除外日チェック: 「after」タイプの除外がある場合、その日以降はチェック不要
+            let excludeAfterDate: Date | null = null;
+            if (exclusions) {
+                for (const exclusion of exclusions) {
+                    if (exclusion.exclusion_type === 'after' && exclusion.excluded_date < todayStart) {
+                        excludeAfterDate = exclusion.excluded_date;
+                        break;
+                    }
                 }
+            }
 
-                // 次の日をチェック
-                if (task.recurrence_type === 'daily') {
-                    checkDate = addDays(checkDate, 1);
-                } else if (task.recurrence_type === 'weekly') {
-                    checkDate = addDays(checkDate, 7);
-                } else if (task.recurrence_type === 'monthly' || task.recurrence_type === 'monthly_end') {
-                    checkDate = addMonths(checkDate, 1);
-                } else if (task.recurrence_type === 'yearly') {
-                    checkDate = addYears(checkDate, 1);
-                } else {
-                    checkDate = addDays(checkDate, 1);
-                }
+            // 除外開始日が期日より前の場合はスキップ
+            if (excludeAfterDate && isBefore(excludeAfterDate, taskDueDate)) {
+                continue;
+            }
 
-                // 無限ループ防止
-                if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > 365) {
-                    break;
-                }
+            // 繰り返しタイプに応じて効率的に出現日を計算
+            const occurrenceDates = getRecurringOccurrenceDates(
+                task.recurrence_type,
+                taskDueDate,
+                todayStart,
+                task.custom_days,
+                task.custom_unit,
+                task.recurrence_weekdays,
+                exclusions
+            );
+
+            // 出現日を追加
+            for (const occurrenceDate of occurrenceDates) {
+                overdueCompletionPairs.push({ taskId: task.id, date: occurrenceDate });
             }
         }
     }
@@ -356,6 +352,7 @@ export async function getOverdueTaskDates(
     const completionsMap = await getTaskCompletionsBatch(overdueCompletionPairs);
 
     // 未完了のタスクがある日を収集
+    const overdueDatesSet = new Set<string>();
     for (const pair of overdueCompletionPairs) {
         const completionKey = `${pair.taskId}_${format(pair.date, 'yyyy-MM-dd')}`;
         const completion = completionsMap.get(completionKey);
@@ -369,6 +366,224 @@ export async function getOverdueTaskDates(
     return Array.from(overdueDatesSet)
         .map(dateStr => parseISO(dateStr))
         .sort((a, b) => a.getTime() - b.getTime());
+}
+
+// 繰り返しタスクの出現日を効率的に計算（最適化版）
+function getRecurringOccurrenceDates(
+    recurrenceType: string,
+    taskDueDate: Date,
+    endDate: Date,
+    customDays: number | null,
+    customUnit: string | null,
+    weekdays: number[] | null,
+    exclusions: Array<{ excluded_date: Date; exclusion_type: string }> | null
+): Date[] {
+    const occurrences: Date[] = [];
+    let checkDate = new Date(taskDueDate);
+    const maxDays = 365; // 最大チェック日数
+
+    // 除外日チェック用のヘルパー関数
+    const isExcluded = (date: Date): boolean => {
+        if (!exclusions) return false;
+        for (const exclusion of exclusions) {
+            if (exclusion.exclusion_type === 'single' && isSameDay(exclusion.excluded_date, date)) {
+                return true;
+            }
+            if (exclusion.exclusion_type === 'after' && date >= exclusion.excluded_date) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    switch (recurrenceType) {
+        case 'daily':
+            // 毎日: 期日から今日まで1日ずつ（ただし、除外日をスキップ）
+            while (isBefore(checkDate, endDate)) {
+                if (!isExcluded(checkDate)) {
+                    occurrences.push(new Date(checkDate));
+                }
+                checkDate = addDays(checkDate, 1);
+                
+                // 無限ループ防止
+                if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > maxDays) {
+                    break;
+                }
+            }
+            break;
+
+        case 'weekly':
+            // 毎週: 同じ曜日のみをチェック
+            const targetWeekday = getDay(taskDueDate);
+            while (isBefore(checkDate, endDate)) {
+                if (getDay(checkDate) === targetWeekday && !isExcluded(checkDate)) {
+                    occurrences.push(new Date(checkDate));
+                }
+                // 次の同じ曜日までスキップ（最大1週間）
+                const daysUntilNextWeekday = (targetWeekday - getDay(checkDate) + 7) % 7 || 7;
+                checkDate = addDays(checkDate, daysUntilNextWeekday);
+                
+                if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > maxDays) {
+                    break;
+                }
+            }
+            break;
+
+        case 'monthly':
+            // 毎月: 同じ日のみをチェック
+            const targetDay = taskDueDate.getDate();
+            while (isBefore(checkDate, endDate)) {
+                if (checkDate.getDate() === targetDay && !isExcluded(checkDate)) {
+                    occurrences.push(new Date(checkDate));
+                }
+                // 次の月に進む
+                checkDate = addMonths(checkDate, 1);
+                
+                if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > maxDays) {
+                    break;
+                }
+            }
+            break;
+
+        case 'monthly_end':
+            // 毎月末: その月の最終日のみをチェック
+            while (isBefore(checkDate, endDate)) {
+                const monthEnd = endOfMonth(checkDate);
+                if (isSameDay(checkDate, monthEnd) && !isExcluded(checkDate)) {
+                    occurrences.push(new Date(checkDate));
+                }
+                // 次の月に進む
+                checkDate = addMonths(checkDate, 1);
+                
+                if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > maxDays) {
+                    break;
+                }
+            }
+            break;
+
+        case 'yearly':
+            // 毎年: 同じ月日のみをチェック
+            const targetMonth = taskDueDate.getMonth();
+            const targetDate = taskDueDate.getDate();
+            while (isBefore(checkDate, endDate)) {
+                if (checkDate.getMonth() === targetMonth && checkDate.getDate() === targetDate && !isExcluded(checkDate)) {
+                    occurrences.push(new Date(checkDate));
+                }
+                // 次の年へ進む
+                checkDate = addYears(checkDate, 1);
+                
+                if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > maxDays) {
+                    break;
+                }
+            }
+            break;
+
+        case 'weekdays':
+            // 指定曜日: 該当する曜日だけをチェック
+            if (weekdays && weekdays.length > 0) {
+                const weekdaySet = new Set(weekdays);
+                // 期日から今日まで1日ずつチェック（指定曜日のみ）
+                while (isBefore(checkDate, endDate)) {
+                    if (weekdaySet.has(getDay(checkDate)) && !isExcluded(checkDate)) {
+                        occurrences.push(new Date(checkDate));
+                    }
+                    checkDate = addDays(checkDate, 1);
+                    
+                    if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > maxDays) {
+                        break;
+                    }
+                }
+            }
+            break;
+
+        case 'custom':
+            // カスタム期間: 単位に応じて効率的にチェック
+            if (!customDays || customDays <= 0) break;
+
+            if (!customUnit || customUnit === 'days') {
+                // 日単位
+                while (isBefore(checkDate, endDate)) {
+                    const daysDiff = Math.floor((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24));
+                    if (daysDiff >= 0 && daysDiff % customDays === 0 && !isExcluded(checkDate)) {
+                        occurrences.push(new Date(checkDate));
+                    }
+                    // customDays日ずつ進める（効率化）
+                    checkDate = addDays(checkDate, customDays);
+                    
+                    if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > maxDays) {
+                        break;
+                    }
+                }
+            } else if (customUnit === 'weeks') {
+                // 週単位
+                const weekInterval = customDays * 7;
+                while (isBefore(checkDate, endDate)) {
+                    const daysDiff = Math.floor((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24));
+                    if (daysDiff >= 0 && daysDiff % weekInterval === 0 && !isExcluded(checkDate)) {
+                        occurrences.push(new Date(checkDate));
+                    }
+                    checkDate = addDays(checkDate, weekInterval);
+                    
+                    if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > maxDays) {
+                        break;
+                    }
+                }
+            } else if (customUnit === 'months') {
+                // 月単位: 同じ日のみをチェック
+                const targetDay = taskDueDate.getDate();
+                while (isBefore(checkDate, endDate)) {
+                    if (checkDate.getDate() === targetDay && !isExcluded(checkDate)) {
+                        const monthsDiff = (checkDate.getFullYear() - taskDueDate.getFullYear()) * 12 +
+                            (checkDate.getMonth() - taskDueDate.getMonth());
+                        if (monthsDiff >= 0 && monthsDiff % customDays === 0) {
+                            occurrences.push(new Date(checkDate));
+                        }
+                    }
+                    checkDate = addMonths(checkDate, 1);
+                    
+                    if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > maxDays) {
+                        break;
+                    }
+                }
+            } else if (customUnit === 'months_end') {
+                // 月単位（月末）
+                while (isBefore(checkDate, endDate)) {
+                    const monthEnd = endOfMonth(checkDate);
+                    if (isSameDay(checkDate, monthEnd) && !isExcluded(checkDate)) {
+                        const monthsDiff = (checkDate.getFullYear() - taskDueDate.getFullYear()) * 12 +
+                            (checkDate.getMonth() - taskDueDate.getMonth());
+                        if (monthsDiff >= 0 && monthsDiff % customDays === 0) {
+                            occurrences.push(new Date(checkDate));
+                        }
+                    }
+                    checkDate = addMonths(checkDate, 1);
+                    
+                    if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > maxDays) {
+                        break;
+                    }
+                }
+            } else if (customUnit === 'years') {
+                // 年単位
+                const targetMonth = taskDueDate.getMonth();
+                const targetDate = taskDueDate.getDate();
+                while (isBefore(checkDate, endDate)) {
+                    if (checkDate.getMonth() === targetMonth && checkDate.getDate() === targetDate && !isExcluded(checkDate)) {
+                        const yearsDiff = checkDate.getFullYear() - taskDueDate.getFullYear();
+                        if (yearsDiff >= 0 && yearsDiff % customDays === 0) {
+                            occurrences.push(new Date(checkDate));
+                        }
+                    }
+                    checkDate = addYears(checkDate, 1);
+                    
+                    if (Math.abs((checkDate.getTime() - taskDueDate.getTime()) / (1000 * 60 * 60 * 24)) > maxDays) {
+                        break;
+                    }
+                }
+            }
+            break;
+    }
+
+    return occurrences;
 }
 
 // 繰り返しタスクが指定日に該当するかチェック（除外日データを引数で受け取る版）
