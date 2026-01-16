@@ -273,13 +273,14 @@ export async function sendWebPushNotification(
     taskTitle: string,
     dueDate: Date,
     notificationTime: string
-): Promise<boolean> {
+): Promise<{ success: boolean; error?: string }> {
     console.log(`[WebPush] sendWebPushNotification called for user ${userId}, task: ${taskTitle}`);
     
     if (!vapidPublicKey || !vapidPrivateKey) {
-        console.error('[WebPush] VAPID keys are not configured');
+        const errorMsg = 'VAPID keys are not configured';
+        console.error(`[WebPush] ${errorMsg}`);
         console.error(`[WebPush] Public key exists: ${!!vapidPublicKey}, Private key exists: ${!!vapidPrivateKey}`);
-        return false;
+        return { success: false, error: errorMsg };
     }
 
     try {
@@ -294,8 +295,9 @@ export async function sendWebPushNotification(
         console.log(`[WebPush] Found ${subscriptions.length} subscription(s) for user ${userId}`);
         
         if (subscriptions.length === 0) {
-            console.log(`[WebPush] No web push subscription found for user ${userId}`);
-            return false;
+            const errorMsg = `No web push subscription found for user ${userId}`;
+            console.log(`[WebPush] ${errorMsg}`);
+            return { success: false, error: errorMsg };
         }
 
         const formattedDate = format(dueDate, 'yyyy年M月d日(E)', { locale: ja });
@@ -326,7 +328,7 @@ export async function sendWebPushNotification(
                     notificationPayload
                 );
                 console.log(`[WebPush] Successfully sent to subscription ${index + 1}`);
-                return true;
+                return { success: true };
             } catch (error: any) {
                 // 無効なサブスクリプションは削除
                 if (error.statusCode === 410 || error.statusCode === 404) {
@@ -337,23 +339,37 @@ export async function sendWebPushNotification(
                     `;
                     console.log(`[WebPush] Deleted invalid subscription ${index + 1}`);
                 }
-                console.error(`[WebPush] Failed to send to subscription ${index + 1}:`, error);
-                console.error(`[WebPush] Error details:`, {
+                const errorDetails = {
                     statusCode: error.statusCode,
                     message: error.message,
-                    body: error.body
-                });
-                return false;
+                    body: error.body,
+                    endpoint: sub.endpoint.substring(0, 50) + '...'
+                };
+                console.error(`[WebPush] Failed to send to subscription ${index + 1}:`, error);
+                console.error(`[WebPush] Error details:`, errorDetails);
+                return { success: false, error: `Subscription ${index + 1} failed: ${error.statusCode || 'unknown'} - ${error.message || 'unknown error'}` };
             }
         });
 
         const results = await Promise.all(sendPromises);
-        const successCount = results.filter(r => r).length;
+        const successCount = results.filter(r => r.success).length;
+        const failedResults = results.filter(r => !r.success);
         console.log(`[WebPush] Sent successfully to ${successCount}/${subscriptions.length} subscription(s)`);
-        return results.some((success) => success);
+        
+        if (failedResults.length > 0) {
+            const errorMessages = failedResults.map(r => r.error).filter(Boolean);
+            return {
+                success: successCount > 0,
+                error: errorMessages.length > 0 ? errorMessages.join('; ') : 'Some subscriptions failed'
+            };
+        }
+        
+        return { success: true };
     } catch (error) {
-        console.error('Error sending web push notification:', error);
-        return false;
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        console.error('[WebPush] Error sending web push notification:', error);
+        console.error('[WebPush] Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+        return { success: false, error: errorMsg };
     }
 }
 
@@ -433,17 +449,19 @@ export async function sendNotificationsForDateTime(
         // 注意: SQLクエリで既に時刻でフィルタリングされているので、重複チェックは不要
         if (setting.web_push_enabled) {
             console.log(`[WebPush] Attempting to send push notification to user ${task.userId} for task ${task.taskId}`);
-            const pushSent = await sendWebPushNotification(
+            const pushResult = await sendWebPushNotification(
                 task.userId,
                 task.title,
                 task.dueDate,
                 task.notificationTime
             );
-            if (pushSent) {
+            if (pushResult.success) {
                 console.log(`[WebPush] Successfully sent push notification to user ${task.userId}`);
                 webPushCount++;
             } else {
-                const errorMsg = `Failed to send web push to user ${task.userId} for task ${task.taskId}`;
+                const errorMsg = pushResult.error 
+                    ? `Failed to send web push to user ${task.userId} for task ${task.taskId}: ${pushResult.error}`
+                    : `Failed to send web push to user ${task.userId} for task ${task.taskId}`;
                 errors.push(errorMsg);
                 console.error(`[WebPush] ${errorMsg}`);
             }
