@@ -10,6 +10,7 @@ import { DisplayTask } from '@/types/database';
 import { format, parseISO, isSameDay, addMonths, subMonths } from 'date-fns';
 import {
     getCachedTasksForDate,
+    getCachedTasksForDateWithoutTTL,
     updateTasksCache,
     clearTasksCache,
     isWithinCurrentMonthRange,
@@ -40,17 +41,23 @@ function TopPageContent() {
         }
         return new Date();
     });
-    const [tasks, setTasks] = useState<DisplayTask[]>([]);
+
+    const [tasks, setTasks] = useState<DisplayTask[]>(() => {
+        // 初期表示時はキャッシュがないため空配列
+        // userIdが設定された後にキャッシュを読み込む
+        return [];
+    });
     const [memorials, setMemorials] = useState<Array<{ id: string; title: string }>>([]);
     const [overdueDates, setOverdueDates] = useState<Date[]>([]);
     const [userId, setUserId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
+    const [isUpdating, setIsUpdating] = useState(false); // バックグラウンド更新中フラグ
 
     useEffect(() => {
-        // 認証チェック
+        // 認証チェックと初期キャッシュ読み込み
         let isMounted = true;
 
-        const checkAuth = async () => {
+        const checkAuthAndLoadCache = async () => {
             try {
                 const supabase = createClient();
                 const {
@@ -64,7 +71,28 @@ function TopPageContent() {
                     return;
                 }
 
-                setUserId(user.id);
+                const uid = user.id;
+                setUserId(uid);
+
+                // キャッシュから即座に読み込む（TTLチェックなし）
+                const cachedTasks = getCachedTasksForDateWithoutTTL(uid, selectedDate);
+                if (cachedTasks !== null && cachedTasks.length >= 0) {
+                    // キャッシュがあれば即座に表示
+                    setTasks(cachedTasks);
+                    setLoading(false);
+                    
+                        // バックグラウンドで最新データを取得して更新
+                    const backgroundMountedRef = { current: true };
+                    setTimeout(() => {
+                        if (backgroundMountedRef.current && isMounted) {
+                            loadLatestDataInBackground(uid, selectedDate, cachedTasks, backgroundMountedRef);
+                        }
+                    }, 100);
+                } else {
+                    // キャッシュがない場合はAPIから取得
+                    setLoading(true);
+                    loadTasksFromAPI(uid, selectedDate, true, { current: isMounted });
+                }
             } catch (error) {
                 if (isMounted) {
                     console.error('Failed to check auth:', error);
@@ -73,12 +101,207 @@ function TopPageContent() {
             }
         };
 
-        checkAuth();
+        checkAuthAndLoadCache();
 
         return () => {
             isMounted = false;
         };
-    }, [router]);
+    }, [router, selectedDate]);
+
+    // タスクの差分を比較して更新すべきか判定（完了状態を最優先）
+    const compareAndMergeTasks = (
+        cached: DisplayTask[],
+        latest: DisplayTask[]
+    ): DisplayTask[] | null => {
+        // タスクIDをキーにしたマップを作成
+        const cachedMap = new Map(cached.map(t => [t.task_id, t]));
+        const latestMap = new Map(latest.map(t => [t.task_id, t]));
+
+        let hasChanges = false;
+        const merged: DisplayTask[] = [];
+
+        // 最新データの全てのタスクを処理
+        for (const latestTask of latest) {
+            const cachedTask = cachedMap.get(latestTask.task_id);
+            
+            if (!cachedTask) {
+                // 新規タスク
+                merged.push(latestTask);
+                hasChanges = true;
+            } else {
+                // 既存タスク：完了状態を最優先で更新
+                if (cachedTask.completed !== latestTask.completed) {
+                    merged.push(latestTask);
+                    hasChanges = true;
+                } else {
+                    // 完了状態が同じでも、他の変更があれば更新
+                    const taskChanged = 
+                        cachedTask.title !== latestTask.title ||
+                        cachedTask.description !== latestTask.description ||
+                        cachedTask.priority !== latestTask.priority ||
+                        JSON.stringify(cachedTask.recurrence_type) !== JSON.stringify(latestTask.recurrence_type);
+                    
+                    if (taskChanged) {
+                        merged.push(latestTask);
+                        hasChanges = true;
+                    } else {
+                        merged.push(cachedTask); // 変更なし
+                    }
+                }
+            }
+        }
+
+        // キャッシュにあって最新データにないタスク（削除された）を検出
+        for (const cachedTask of cached) {
+            if (!latestMap.has(cachedTask.task_id)) {
+                hasChanges = true;
+                // 削除されたタスクは merged に含めない
+            }
+        }
+
+        return hasChanges ? merged : null;
+    };
+
+    // バックグラウンドで最新データを取得して差分更新
+    const loadLatestDataInBackground = async (
+        uid: string,
+        date: Date,
+        currentCachedTasks: DisplayTask[],
+        mountedRef?: { current: boolean }
+    ) => {
+        if (!isWithinCurrentMonthRange(date)) {
+            // 範囲外の場合は通常のAPI取得
+            loadTasksFromAPI(uid, date, false, mountedRef);
+            return;
+        }
+
+        setIsUpdating(true);
+        const dateStr = format(date, 'yyyy-MM-dd');
+
+        try {
+            // 最新データを取得
+            const [tasksResponse, memorialsResponse] = await Promise.all([
+                fetch(`/api/tasks?date=${dateStr}`),
+                fetch(`/api/memorials?date=${dateStr}`),
+            ]);
+
+            if (mountedRef && !mountedRef.current) return;
+
+            if (!tasksResponse.ok) {
+                // エラーは静かに無視（キャッシュを表示し続ける）
+                console.error('[Background Update] Failed to fetch latest tasks');
+                return;
+            }
+
+            const tasksData = await tasksResponse.json();
+            const latestTasks: DisplayTask[] = tasksData.tasks || [];
+
+            // 差分比較
+            const mergedTasks = compareAndMergeTasks(currentCachedTasks, latestTasks);
+
+            if (mergedTasks !== null && (!mountedRef || mountedRef.current)) {
+                // 差分があった場合のみ更新（ソフトに更新）
+                setTasks(mergedTasks);
+                
+                // キャッシュを更新
+                updateTasksCache(
+                    uid,
+                    { [dateStr]: mergedTasks },
+                    format(subMonths(date, 1), 'yyyy-MM-dd'),
+                    format(addMonths(date, 1), 'yyyy-MM-dd')
+                );
+            }
+
+            // 記念日を更新
+            if (memorialsResponse.ok && (!mountedRef || mountedRef.current)) {
+                const memorialsData = await memorialsResponse.json();
+                setMemorials(memorialsData.memorials || []);
+            }
+
+            // 現在日の場合、未完了の過去タスクがある日を取得
+            const today = new Date();
+            if (isSameDay(date, today) && (!mountedRef || mountedRef.current)) {
+                if (tasksData.overdueDates) {
+                    setOverdueDates(tasksData.overdueDates.map((d: string) => parseISO(d)));
+                }
+            }
+        } catch (error) {
+            // エラーは静かに無視（キャッシュを表示し続ける）
+            console.error('[Background Update] Failed to update tasks:', error);
+        } finally {
+            if (!mountedRef || mountedRef.current) {
+                setIsUpdating(false);
+            }
+        }
+    };
+
+    // APIからタスクを取得（キャッシュがない場合や範囲外の場合）
+    const loadTasksFromAPI = async (
+        uid: string,
+        date: Date,
+        showLoading: boolean,
+        mountedRef?: { current: boolean }
+    ) => {
+        const dateStr = format(date, 'yyyy-MM-dd');
+
+        if (showLoading) {
+            setLoading(true);
+        }
+
+        try {
+            const isInRange = isWithinCurrentMonthRange(date);
+
+            // 記念日も同時に取得
+            const [tasksResponse, memorialsResponse] = await Promise.all([
+                fetch(`/api/tasks?date=${dateStr}`),
+                fetch(`/api/memorials?date=${dateStr}`),
+            ]);
+
+            if (mountedRef && !mountedRef.current) return;
+
+            if (tasksResponse.ok) {
+                const tasksData = await tasksResponse.json();
+                const fetchedTasks = tasksData.tasks || [];
+
+                if (!mountedRef || mountedRef.current) {
+                    setTasks(fetchedTasks);
+                    
+                    // 範囲内の場合はキャッシュに保存
+                    if (isInRange) {
+                        updateTasksCache(
+                            uid,
+                            { [dateStr]: fetchedTasks },
+                            format(subMonths(date, 1), 'yyyy-MM-dd'),
+                            format(addMonths(date, 1), 'yyyy-MM-dd')
+                        );
+                    }
+                }
+
+                // 現在日の場合、未完了の過去タスクがある日を取得
+                const today = new Date();
+                if (isSameDay(date, today)) {
+                    if (tasksData.overdueDates && (!mountedRef || mountedRef.current)) {
+                        setOverdueDates(tasksData.overdueDates.map((d: string) => parseISO(d)));
+                    }
+                }
+            }
+
+            if (memorialsResponse.ok) {
+                const memorialsData = await memorialsResponse.json();
+                if (!mountedRef || mountedRef.current) {
+                    setMemorials(memorialsData.memorials || []);
+                }
+            }
+        } catch (error) {
+            if (!mountedRef || mountedRef.current) {
+                console.error('Failed to load tasks:', error);
+            }
+        } finally {
+            if ((!mountedRef || mountedRef.current) && showLoading) {
+                setLoading(false);
+            }
+        }
+    };
 
     useEffect(() => {
         // URLパラメータから日付を取得
@@ -102,190 +325,41 @@ function TopPageContent() {
         }
     }, [searchParams]);
 
-    // 1ヶ月分のデータを事前取得（バックグラウンド）
+    // 日付が変更された時の処理
     useEffect(() => {
         if (!userId) return;
 
-        let isMounted = true;
+        const mountedRef = { current: true };
 
-        const prefetchMonthRange = async () => {
-            try {
-                const today = new Date();
-                const centerDate = format(today, 'yyyy-MM-dd');
-                
-                // キャッシュをチェック（既にキャッシュがある場合はスキップ）
-                const cached = getCachedTasksForDate(userId, today);
-                if (cached !== null) {
-                    // キャッシュが存在するので、事前取得をスキップ
-                    return;
+        const loadTasksForDate = async () => {
+            const isInRange = isWithinCurrentMonthRange(selectedDate);
+            
+            // キャッシュから即座に読み込む（TTLチェックなし）
+            const cachedTasks = getCachedTasksForDateWithoutTTL(userId, selectedDate);
+            if (cachedTasks !== null && isInRange) {
+                // キャッシュがあれば即座に表示
+                if (mountedRef.current) {
+                    setTasks(cachedTasks);
+                    setLoading(false);
                 }
-
-                // バックグラウンドで1ヶ月分を取得
-                const response = await fetch(`/api/tasks/range?centerDate=${centerDate}`);
-                if (!isMounted || !response.ok) return;
-
-                const data = await response.json();
-                if (!isMounted) return;
-
-                // キャッシュに保存
-                updateTasksCache(userId, data.tasks, data.startDate, data.endDate);
-            } catch (error) {
-                console.error('Failed to prefetch month range:', error);
+                
+                // バックグラウンドで最新データを取得して更新
+                setTimeout(() => {
+                    if (mountedRef.current) {
+                        loadLatestDataInBackground(userId, selectedDate, cachedTasks, mountedRef);
+                    }
+                }, 100);
+            } else {
+                // キャッシュがない、または範囲外の場合はAPIから取得
+                loadTasksFromAPI(userId, selectedDate, true, mountedRef);
             }
         };
 
-        // 少し遅延させて実行（初期表示を優先）
-        const timeoutId = setTimeout(prefetchMonthRange, 500);
+        loadTasksForDate();
 
         return () => {
-            isMounted = false;
-            clearTimeout(timeoutId);
+            mountedRef.current = false;
         };
-    }, [userId]);
-
-    useEffect(() => {
-        if (userId) {
-            let isMounted = true;
-
-            const loadTasks = async () => {
-                if (!userId) return;
-
-                setLoading(true);
-                const dateStr = format(selectedDate, 'yyyy-MM-dd');
-                
-                try {
-                    // 現在日±1ヶ月の範囲内かチェック
-                    const isInRange = isWithinCurrentMonthRange(selectedDate);
-                    
-                    // キャッシュから取得を試行（範囲内の場合のみ）
-                    if (isInRange) {
-                        const cachedTasks = getCachedTasksForDate(userId, selectedDate);
-                        if (cachedTasks !== null) {
-                            // キャッシュから即座に表示
-                            if (isMounted) {
-                                setTasks(cachedTasks);
-                                setLoading(false);
-                            }
-                            
-                            // 記念日は別途取得
-                            try {
-                                const memorialsResponse = await fetch(`/api/memorials?date=${dateStr}`);
-                                if (isMounted && memorialsResponse.ok) {
-                                    const memorialsData = await memorialsResponse.json();
-                                    setMemorials(memorialsData.memorials || []);
-                                }
-                            } catch (error) {
-                                console.error('Failed to load memorials:', error);
-                            }
-
-                            // 現在日の場合、未完了の過去タスクがある日を取得（バックグラウンド）
-                            const today = new Date();
-                            if (isSameDay(selectedDate, today)) {
-                                try {
-                                    const fullTasksResponse = await fetch(`/api/tasks?date=${dateStr}`);
-                                    if (isMounted && fullTasksResponse.ok) {
-                                        const fullTasksData = await fullTasksResponse.json();
-                                        if (fullTasksData.overdueDates) {
-                                            setOverdueDates(fullTasksData.overdueDates.map((d: string) => parseISO(d)));
-                                        }
-                                    }
-                                } catch (error) {
-                                    console.error('Failed to load overdue dates:', error);
-                                }
-                            }
-                            
-                            return;
-                        }
-                    }
-
-                    // キャッシュがない、または範囲外の場合はAPIから取得
-                    const [tasksBasicResponse, memorialsResponse] = await Promise.all([
-                        fetch(`/api/tasks?date=${dateStr}&basic=true`),
-                        fetch(`/api/memorials?date=${dateStr}`),
-                    ]);
-                    if (!isMounted) return;
-
-                    if (tasksBasicResponse.ok) {
-                        const tasksBasicData = await tasksBasicResponse.json();
-                        if (isMounted) {
-                            setTasks(tasksBasicData.tasks || []);
-                            setOverdueDates([]);
-                        }
-
-                        // バックグラウンドで完了状態を取得して更新
-                        if (tasksBasicData.tasks && tasksBasicData.tasks.length > 0) {
-                            try {
-                                const completionResponse = await fetch('/api/tasks', {
-                                    method: 'PATCH',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({
-                                        tasks: tasksBasicData.tasks,
-                                        date: dateStr,
-                                    }),
-                                });
-                                if (!isMounted) return;
-
-                                if (completionResponse.ok) {
-                                    const completionData = await completionResponse.json();
-                                    if (isMounted) {
-                                        setTasks(completionData.tasks || tasksBasicData.tasks);
-                                        
-                                        // 範囲内の場合はキャッシュに保存
-                                        if (isInRange) {
-                                            updateTasksCache(
-                                                userId,
-                                                { [dateStr]: completionData.tasks },
-                                                format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
-                                                format(addMonths(selectedDate, 1), 'yyyy-MM-dd')
-                                            );
-                                        }
-                                    }
-                                }
-                            } catch (error) {
-                                console.error('Failed to load completion status:', error);
-                            }
-                        }
-                    }
-
-                    if (memorialsResponse.ok) {
-                        const memorialsData = await memorialsResponse.json();
-                        if (isMounted) {
-                            setMemorials(memorialsData.memorials || []);
-                        }
-                    }
-
-                    // 現在日の場合、未完了の過去タスクがある日を取得（バックグラウンド）
-                    const today = new Date();
-                    if (isSameDay(selectedDate, today)) {
-                        try {
-                            const fullTasksResponse = await fetch(`/api/tasks?date=${dateStr}`);
-                            if (isMounted && fullTasksResponse.ok) {
-                                const fullTasksData = await fullTasksResponse.json();
-                                if (fullTasksData.overdueDates) {
-                                    setOverdueDates(fullTasksData.overdueDates.map((d: string) => parseISO(d)));
-                                }
-                            }
-                        } catch (error) {
-                            console.error('Failed to load overdue dates:', error);
-                        }
-                    }
-                } catch (error) {
-                    if (isMounted) {
-                        console.error('Failed to load tasks:', error);
-                    }
-                } finally {
-                    if (isMounted) {
-                        setLoading(false);
-                    }
-                }
-            };
-
-            loadTasks();
-
-            return () => {
-                isMounted = false;
-            };
-        }
     }, [userId, selectedDate]);
 
     const handleDateSelect = (date: Date) => {
@@ -406,13 +480,15 @@ function TopPageContent() {
                                 <span className="loading loading-spinner loading-lg"></span>
                             </div>
                         ) : (
-                            <TodoList
-                                date={selectedDate}
-                                tasks={tasks}
-                                onToggleCompletion={handleToggleCompletion}
-                                memorials={memorials}
-                                overdueDates={overdueDates}
-                            />
+                            <div className={isUpdating ? 'opacity-75 transition-opacity duration-300' : 'opacity-100 transition-opacity duration-300'}>
+                                <TodoList
+                                    date={selectedDate}
+                                    tasks={tasks}
+                                    onToggleCompletion={handleToggleCompletion}
+                                    memorials={memorials}
+                                    overdueDates={overdueDates}
+                                />
+                            </div>
                         )}
                     </div>
                 </div>

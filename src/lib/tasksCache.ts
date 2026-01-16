@@ -88,6 +88,23 @@ export function setTasksCache(
     }
 }
 
+// キャッシュを取得（TTLチェックなし、表示用）
+export function getTasksCacheWithoutTTL(userId: string): TasksCacheEntry | null {
+    try {
+        const key = getCacheKey(userId);
+        const cached = localStorage.getItem(key);
+        if (!cached) {
+            return null;
+        }
+
+        const entry: TasksCacheEntry = JSON.parse(cached);
+        return entry;
+    } catch (error) {
+        console.error('Error reading tasks cache:', error);
+        return null;
+    }
+}
+
 // 特定の日付範囲のキャッシュを取得（存在し、有効期限内の場合のみ）
 export function getCachedTasksForDate(
     userId: string,
@@ -117,6 +134,43 @@ export function getCachedTasksForDate(
     }
 
     return tasks;
+}
+
+// 特定の日付範囲のキャッシュを取得（TTLチェックなし、初期表示用）
+export function getCachedTasksForDateWithoutTTL(
+    userId: string,
+    date: Date
+): DisplayTask[] | null {
+    const cache = getTasksCacheWithoutTTL(userId);
+    if (!cache) {
+        return null;
+    }
+
+    const dateStr = format(date, 'yyyy-MM-dd');
+    const tasks = cache.tasks[dateStr];
+    
+    if (!tasks) {
+        // キャッシュに該当する日付がない
+        return null;
+    }
+
+    // 日付がキャッシュの範囲内かチェック
+    const cacheStart = parseISO(cache.startDate);
+    const cacheEnd = parseISO(cache.endDate);
+    const checkDate = startOfDay(date);
+    
+    if (checkDate < startOfDay(cacheStart) || checkDate > startOfDay(cacheEnd)) {
+        // キャッシュの範囲外
+        return null;
+    }
+
+    // 日付文字列をDateオブジェクトに変換
+    return tasks.map(task => ({
+        ...task,
+        date: typeof task.date === 'string' ? parseISO(task.date) : task.date,
+        due_date: typeof task.due_date === 'string' ? parseISO(task.due_date) : task.due_date,
+        created_at: task.created_at ? (typeof task.created_at === 'string' ? parseISO(task.created_at) : task.created_at) : undefined,
+    }));
 }
 
 // 特定の日付範囲のキャッシュを更新（既存のキャッシュとマージ）
