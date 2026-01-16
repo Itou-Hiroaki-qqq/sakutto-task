@@ -286,6 +286,21 @@ export async function sendWebPushNotification(
     try {
         // ユーザーのWeb Pushサブスクリプションを取得
         console.log(`[WebPush] Fetching subscriptions for user ${userId}`);
+        
+        // デバッグ: データベース内のすべてのサブスクリプションを確認
+        const allSubscriptions = await sql`
+            SELECT user_id, endpoint, created_at, updated_at
+            FROM web_push_subscriptions
+            ORDER BY created_at DESC
+            LIMIT 10
+        `;
+        console.log(`[WebPush] Debug: Total subscriptions in database (recent 10):`, allSubscriptions.map((s: any) => ({
+            user_id: s.user_id,
+            endpoint: s.endpoint.substring(0, 50) + '...',
+            created_at: s.created_at,
+            updated_at: s.updated_at
+        })));
+        
         const subscriptions = await sql`
             SELECT endpoint, p256dh, auth
             FROM web_push_subscriptions

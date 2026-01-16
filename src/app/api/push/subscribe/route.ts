@@ -33,6 +33,8 @@ export async function POST(request: NextRequest) {
 
         if (existing.length === 0) {
             // 新規作成
+            console.log(`[WebPush Subscribe] Creating new subscription for user ${user.id}`);
+            console.log(`[WebPush Subscribe] Endpoint: ${subscription.endpoint.substring(0, 50)}...`);
             await sql`
                 INSERT INTO web_push_subscriptions (
                     user_id,
@@ -46,8 +48,11 @@ export async function POST(request: NextRequest) {
                     ${subscription.keys.auth}
                 )
             `;
+            console.log(`[WebPush Subscribe] Successfully created subscription for user ${user.id}`);
         } else {
             // 更新（ユーザーIDが変わった場合など）
+            console.log(`[WebPush Subscribe] Updating existing subscription for user ${user.id}`);
+            console.log(`[WebPush Subscribe] Endpoint: ${subscription.endpoint.substring(0, 50)}...`);
             await sql`
                 UPDATE web_push_subscriptions
                 SET
@@ -57,7 +62,16 @@ export async function POST(request: NextRequest) {
                     updated_at = CURRENT_TIMESTAMP
                 WHERE endpoint = ${subscription.endpoint}
             `;
+            console.log(`[WebPush Subscribe] Successfully updated subscription for user ${user.id}`);
         }
+
+        // デバッグ: 登録後の状態を確認
+        const verify = await sql`
+            SELECT user_id, endpoint, created_at, updated_at
+            FROM web_push_subscriptions
+            WHERE user_id = ${user.id}
+        `;
+        console.log(`[WebPush Subscribe] Verification: User ${user.id} now has ${verify.length} subscription(s)`);
 
         return NextResponse.json({ success: true });
     } catch (error) {
