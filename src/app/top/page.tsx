@@ -7,7 +7,7 @@ import TodoList from '@/components/TodoList';
 import Layout from '@/components/Layout';
 import { createClient } from '@/lib/supabase/client';
 import { DisplayTask } from '@/types/database';
-import { format, parseISO, isSameDay, addMonths, subMonths } from 'date-fns';
+import { format, parseISO, isSameDay, addMonths, subMonths, addDays, subDays, startOfDay, differenceInDays } from 'date-fns';
 import {
     getCachedTasksForDate,
     getCachedTasksForDateWithoutTTL,
@@ -81,7 +81,7 @@ function TopPageContent() {
                     setTasks(cachedTasks);
                     setLoading(false);
                     
-                        // バックグラウンドで最新データを取得して更新
+                    // バックグラウンドで最新データを取得して更新
                     const backgroundMountedRef = { current: true };
                     setTimeout(() => {
                         if (backgroundMountedRef.current && isMounted) {
@@ -93,6 +93,11 @@ function TopPageContent() {
                     setLoading(true);
                     loadTasksFromAPI(uid, selectedDate, true, { current: isMounted });
                 }
+
+                // 段階的な事前読み込みを開始（現在日±1ヶ月の範囲内）
+                const prefetchMountedRef = { current: isMounted };
+                const today = new Date();
+                prefetchMonthRange(uid, today, prefetchMountedRef);
             } catch (error) {
                 if (isMounted) {
                     console.error('Failed to check auth:', error);
@@ -195,7 +200,15 @@ function TopPageContent() {
             }
 
             const tasksData = await tasksResponse.json();
-            const latestTasks: DisplayTask[] = tasksData.tasks || [];
+            const latestTasksRaw: any[] = tasksData.tasks || [];
+
+            // APIから取得したデータの日付をDateオブジェクトに変換
+            const latestTasks: DisplayTask[] = latestTasksRaw.map(task => ({
+                ...task,
+                date: typeof task.date === 'string' ? parseISO(task.date) : new Date(task.date),
+                due_date: typeof task.due_date === 'string' ? parseISO(task.due_date) : new Date(task.due_date),
+                created_at: task.created_at ? (typeof task.created_at === 'string' ? parseISO(task.created_at) : new Date(task.created_at)) : undefined,
+            }));
 
             // 差分比較
             const mergedTasks = compareAndMergeTasks(currentCachedTasks, latestTasks);
@@ -236,6 +249,160 @@ function TopPageContent() {
         }
     };
 
+    // 現在日±1ヶ月の範囲内の日付リストを生成（現在日から近い順にソート）
+    const generateDateListForPrefetch = (centerDate: Date): Date[] => {
+        const dates: Date[] = [];
+        const startDate = subMonths(centerDate, 1);
+        const endDate = addMonths(centerDate, 1);
+        
+        let currentDate = startOfDay(startDate);
+        const end = startOfDay(endDate);
+        
+        while (currentDate <= end) {
+            dates.push(new Date(currentDate));
+            currentDate = addDays(currentDate, 1);
+        }
+        
+        // 現在日から近い順にソート（今日 → 明日 → 昨日 → 明後日 → 一昨日 → ...）
+        return dates.sort((a, b) => {
+            const diffA = Math.abs(differenceInDays(a, centerDate));
+            const diffB = Math.abs(differenceInDays(b, centerDate));
+            if (diffA !== diffB) {
+                return diffA - diffB;
+            }
+            // 同じ距離の場合、未来を優先
+            return a.getTime() - b.getTime();
+        });
+    };
+
+    // バッチ単位で日付のタスクを読み込む（並列リクエスト数制限付き）
+    const prefetchDatesBatch = async (
+        uid: string,
+        dates: Date[],
+        batchSize: number = 8,
+        mountedRef?: { current: boolean }
+    ) => {
+        const dateQueue = [...dates];
+        
+        while (dateQueue.length > 0 && (!mountedRef || mountedRef.current)) {
+            // バッチサイズ分の日付を取得
+            const batch = dateQueue.splice(0, batchSize);
+            
+            // キャッシュがない日付のみをフィルタリング
+            const datesToFetch = batch.filter(date => {
+                const cached = getCachedTasksForDateWithoutTTL(uid, date);
+                return cached === null || cached.length === 0;
+            });
+            
+            if (datesToFetch.length === 0) {
+                continue; // すべてキャッシュ済みならスキップ
+            }
+            
+            // 並列でリクエストを送信
+            const fetchPromises = datesToFetch.map(async (date) => {
+                if (!mountedRef || mountedRef.current) {
+                    try {
+                        const dateStr = format(date, 'yyyy-MM-dd');
+                        const response = await fetch(`/api/tasks?date=${dateStr}`);
+                        
+                        if (response.ok && (!mountedRef || mountedRef.current)) {
+                            const data = await response.json();
+                            const fetchedTasksRaw: any[] = data.tasks || [];
+                            
+                            // APIから取得したデータの日付をDateオブジェクトに変換
+                            const fetchedTasks: DisplayTask[] = fetchedTasksRaw.map(task => ({
+                                ...task,
+                                date: typeof task.date === 'string' ? parseISO(task.date) : new Date(task.date),
+                                due_date: typeof task.due_date === 'string' ? parseISO(task.due_date) : new Date(task.due_date),
+                                created_at: task.created_at ? (typeof task.created_at === 'string' ? parseISO(task.created_at) : new Date(task.created_at)) : undefined,
+                            }));
+                            
+                            // キャッシュに保存
+                            if (isWithinCurrentMonthRange(date)) {
+                                updateTasksCache(
+                                    uid,
+                                    { [dateStr]: fetchedTasks },
+                                    format(subMonths(date, 1), 'yyyy-MM-dd'),
+                                    format(addMonths(date, 1), 'yyyy-MM-dd')
+                                );
+                            }
+                        }
+                    } catch (error) {
+                        // エラーは静かに無視
+                        console.error(`[Prefetch] Failed to prefetch date ${format(date, 'yyyy-MM-dd')}:`, error);
+                    }
+                }
+            });
+            
+            // バッチの完了を待つ
+            await Promise.all(fetchPromises);
+            
+            // 次のバッチまで少し待機（サーバー負荷を軽減）
+            if (dateQueue.length > 0) {
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+        }
+    };
+
+    // 段階的な事前読み込みを実行
+    const prefetchMonthRange = async (
+        uid: string,
+        centerDate: Date,
+        mountedRef?: { current: boolean }
+    ) => {
+        if (!isWithinCurrentMonthRange(centerDate)) {
+            return; // 範囲外の場合はスキップ
+        }
+        
+        // 現在日±1ヶ月の範囲内の日付リストを生成（現在日から近い順）
+        const allDates = generateDateListForPrefetch(centerDate);
+        
+        // 今日は既に読み込まれているはずなので除外
+        const today = startOfDay(new Date());
+        const datesToPrefetch = allDates.filter(date => 
+            !isSameDay(date, today)
+        );
+        
+        // フェーズ1: ±1日（3日分、現在日を除く）
+        const phase1Dates = datesToPrefetch.filter(date => {
+            const diff = Math.abs(differenceInDays(date, centerDate));
+            return diff <= 1;
+        });
+        
+        // フェーズ2: ±7日（残り11日分）
+        const phase2Dates = datesToPrefetch.filter(date => {
+            const diff = Math.abs(differenceInDays(date, centerDate));
+            return diff > 1 && diff <= 7;
+        });
+        
+        // フェーズ3: 残り（±1ヶ月の残り）
+        const phase3Dates = datesToPrefetch.filter(date => {
+            const diff = Math.abs(differenceInDays(date, centerDate));
+            return diff > 7;
+        });
+        
+        // フェーズ1: 100ms後に開始
+        setTimeout(async () => {
+            if (mountedRef?.current) {
+                await prefetchDatesBatch(uid, phase1Dates, 8, mountedRef);
+            }
+        }, 100);
+        
+        // フェーズ2: 500ms後に開始
+        setTimeout(async () => {
+            if (mountedRef?.current) {
+                await prefetchDatesBatch(uid, phase2Dates, 8, mountedRef);
+            }
+        }, 500);
+        
+        // フェーズ3: 1秒後に開始
+        setTimeout(async () => {
+            if (mountedRef?.current) {
+                await prefetchDatesBatch(uid, phase3Dates, 8, mountedRef);
+            }
+        }, 1000);
+    };
+
     // APIからタスクを取得（キャッシュがない場合や範囲外の場合）
     const loadTasksFromAPI = async (
         uid: string,
@@ -262,7 +429,15 @@ function TopPageContent() {
 
             if (tasksResponse.ok) {
                 const tasksData = await tasksResponse.json();
-                const fetchedTasks = tasksData.tasks || [];
+                const fetchedTasksRaw: any[] = tasksData.tasks || [];
+
+                // APIから取得したデータの日付をDateオブジェクトに変換
+                const fetchedTasks: DisplayTask[] = fetchedTasksRaw.map(task => ({
+                    ...task,
+                    date: typeof task.date === 'string' ? parseISO(task.date) : new Date(task.date),
+                    due_date: typeof task.due_date === 'string' ? parseISO(task.due_date) : new Date(task.due_date),
+                    created_at: task.created_at ? (typeof task.created_at === 'string' ? parseISO(task.created_at) : new Date(task.created_at)) : undefined,
+                }));
 
                 if (!mountedRef || mountedRef.current) {
                     setTasks(fetchedTasks);
@@ -423,13 +598,22 @@ function TopPageContent() {
                 if (updatedTasksResponse.ok) {
                     const updatedData = await updatedTasksResponse.json();
                     if (updatedData.tasks) {
+                        // APIから取得したデータの日付をDateオブジェクトに変換
+                        const updatedTasksRaw: any[] = updatedData.tasks;
+                        const updatedTasks: DisplayTask[] = updatedTasksRaw.map(task => ({
+                            ...task,
+                            date: typeof task.date === 'string' ? parseISO(task.date) : new Date(task.date),
+                            due_date: typeof task.due_date === 'string' ? parseISO(task.due_date) : new Date(task.due_date),
+                            created_at: task.created_at ? (typeof task.created_at === 'string' ? parseISO(task.created_at) : new Date(task.created_at)) : undefined,
+                        }));
+                        
                         updateTasksCache(
                             userId,
-                            { [dateStr]: updatedData.tasks },
+                            { [dateStr]: updatedTasks },
                             format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
                             format(addMonths(selectedDate, 1), 'yyyy-MM-dd')
                         );
-                        setTasks(updatedData.tasks);
+                        setTasks(updatedTasks);
                     }
                 }
             }
