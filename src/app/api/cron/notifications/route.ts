@@ -37,58 +37,39 @@ export async function GET(request: NextRequest) {
         const roundedTime = new Date(jstTime);
         roundedTime.setMinutes(roundedMinutes, 0, 0);
         
-        // cron-job.orgは正確に5分ごとに実行されるため、現在時刻の前後5分をチェックするだけで十分
-        // ただし、数秒～1分程度の遅延を考慮して、-5分～+5分の範囲をチェック
+        // cron-job.orgは正確に5分ごとに実行されるため、現在時刻の5分刻み時刻のみをチェック
+        // これにより、指定した時刻に1回だけ通知が送信される
         const timeChecks: Array<{ date: Date; time: string }> = [];
-        
-        // 過去5分～未来5分の5分刻み時刻をチェック（合計3個の時刻: -5分, 0分（現在）, +5分）
-        for (let offset = -5; offset <= 5; offset += 5) {
-            const checkTime = new Date(roundedTime);
-            checkTime.setMinutes(checkTime.getMinutes() + offset);
-            // 日付が変わる場合は自動的に処理される（Dateオブジェクトが自動調整）
-            const checkTimeStr = format(checkTime, 'HH:mm');
-            timeChecks.push({ date: checkTime, time: checkTimeStr });
-        }
+        const checkTimeStr = format(roundedTime, 'HH:mm');
+        timeChecks.push({ date: roundedTime, time: checkTimeStr });
         
         const currentDate = format(roundedTime, 'yyyy-MM-dd');
         const currentTime = format(roundedTime, 'HH:mm');
         
         console.log(`[Cron] UTC time: ${format(now, 'yyyy-MM-dd HH:mm')} (UTC)`);
         console.log(`[Cron] JST time: ${format(jstTime, 'yyyy-MM-dd HH:mm')} (JST)`);
-        console.log(`[Cron] Checking notifications for ${timeChecks.length} time slots:`, 
-            timeChecks.map(t => `${format(t.date, 'yyyy-MM-dd')} ${t.time}`).join(', '));
+        console.log(`[Cron] Checking notifications for time slot: ${format(roundedTime, 'yyyy-MM-dd')} ${checkTimeStr}`);
 
-        // 各時刻について通知を送信
-        const results = await Promise.all(
-            timeChecks.map(async ({ date, time }, index) => {
-                const dateStr = format(date, 'yyyy-MM-dd');
-                console.log(`[Cron] [${index + 1}/${timeChecks.length}] Sending notifications for ${dateStr} ${time}`);
-                console.log(`[Cron] [${index + 1}/${timeChecks.length}] Date object details:`, {
-                    dateISO: date.toISOString(),
-                    dateStr,
-                    time,
-                    year: date.getFullYear(),
-                    month: date.getMonth() + 1,
-                    day: date.getDate(),
-                    hour: date.getHours(),
-                    minute: date.getMinutes()
-                });
-                const result = await sendNotificationsForDateTime(date, time);
-                console.log(`[Cron] [${index + 1}/${timeChecks.length}] Result for ${dateStr} ${time}:`, {
-                    emailCount: result.emailCount,
-                    webPushCount: result.webPushCount,
-                    errorsCount: result.errors.length
-                });
-                return result;
-            })
-        );
-        
-        // 結果を統合
-        const result = {
-            emailCount: results.reduce((sum, r) => sum + r.emailCount, 0),
-            webPushCount: results.reduce((sum, r) => sum + r.webPushCount, 0),
-            errors: results.flatMap(r => r.errors),
-        };
+        // 現在時刻の5分刻み時刻について通知を送信
+        const { date, time } = timeChecks[0];
+        const dateStr = format(date, 'yyyy-MM-dd');
+        console.log(`[Cron] Sending notifications for ${dateStr} ${time}`);
+        console.log(`[Cron] Date object details:`, {
+            dateISO: date.toISOString(),
+            dateStr,
+            time,
+            year: date.getFullYear(),
+            month: date.getMonth() + 1,
+            day: date.getDate(),
+            hour: date.getHours(),
+            minute: date.getMinutes()
+        });
+        const result = await sendNotificationsForDateTime(date, time);
+        console.log(`[Cron] Result for ${dateStr} ${time}:`, {
+            emailCount: result.emailCount,
+            webPushCount: result.webPushCount,
+            errorsCount: result.errors.length
+        });
 
         return NextResponse.json({
             success: true,
@@ -97,6 +78,10 @@ export async function GET(request: NextRequest) {
             emailCount: result.emailCount,
             webPushCount: result.webPushCount,
             errors: result.errors,
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+            },
         });
     } catch (error) {
         console.error('Failed to process notifications:', error);
