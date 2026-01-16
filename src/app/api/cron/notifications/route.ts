@@ -6,14 +6,24 @@ import { toZonedTime } from 'date-fns-tz';
 // cron-job.orgから呼び出されるエンドポイント
 // このエンドポイントは5分ごとに実行される想定
 export async function GET(request: NextRequest) {
+    console.log(`[Cron] ===== Notification endpoint called =====`);
+    console.log(`[Cron] Request URL: ${request.url}`);
+    console.log(`[Cron] Request method: ${request.method}`);
+    console.log(`[Cron] Request timestamp: ${new Date().toISOString()}`);
+    
     try {
         // 認証（セキュリティのため）
         const authHeader = request.headers.get('authorization');
         const cronSecret = process.env.CRON_SECRET;
         
+        console.log(`[Cron] Auth check: cronSecret exists=${!!cronSecret}, authHeader exists=${!!authHeader}`);
+        
         if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+            console.error(`[Cron] Unauthorized access attempt`);
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
+        
+        console.log(`[Cron] Authentication passed`);
 
         // 現在の日時を取得（UTC）
         const now = new Date();

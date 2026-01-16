@@ -428,9 +428,17 @@ export async function sendNotificationsForDateTime(
     targetDate: Date,
     targetTime: string
 ): Promise<{ emailCount: number; webPushCount: number; errors: string[] }> {
+    console.log(`[Notification] ===== sendNotificationsForDateTime called =====`);
     console.log(`[Notification] Starting notification check for ${targetDate.toISOString().split('T')[0]} ${targetTime}`);
+    console.log(`[Notification] Target date: ${targetDate.toISOString()}, Target time: ${targetTime}`);
+    
     const tasks = await getTasksToNotify(targetDate, targetTime);
     console.log(`[Notification] Found ${tasks.length} task(s) to notify`);
+    
+    if (tasks.length === 0) {
+        console.log(`[Notification] No tasks to notify, returning early`);
+        return { emailCount: 0, webPushCount: 0, errors: [] };
+    }
     
     const errors: string[] = [];
     let emailCount = 0;
