@@ -20,7 +20,6 @@ export async function GET() {
                 user_id,
                 email,
                 email_notification_enabled,
-                web_push_enabled,
                 created_at,
                 updated_at
             FROM user_notification_settings
@@ -34,7 +33,6 @@ export async function GET() {
                 settings: {
                     email: user.email || null,
                     email_notification_enabled: false,
-                    web_push_enabled: false,
                 },
                 loginEmail: user.email || null,
             });
@@ -45,7 +43,6 @@ export async function GET() {
             settings: {
                 email: settings.email || null,
                 email_notification_enabled: settings.email_notification_enabled || false,
-                web_push_enabled: settings.web_push_enabled || false,
             },
             loginEmail: user.email || null,
         });
@@ -71,7 +68,7 @@ export async function PUT(request: NextRequest) {
         }
 
         const body = await request.json();
-        const { email, email_notification_enabled, web_push_enabled } = body;
+        const { email, email_notification_enabled } = body;
 
         // メールアドレスのバリデーション
         if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -94,13 +91,11 @@ export async function PUT(request: NextRequest) {
                 INSERT INTO user_notification_settings (
                     user_id,
                     email,
-                    email_notification_enabled,
-                    web_push_enabled
+                    email_notification_enabled
                 ) VALUES (
                     ${user.id},
                     ${email || null},
-                    ${email_notification_enabled || false},
-                    ${web_push_enabled || false}
+                    ${email_notification_enabled || false}
                 )
             `;
         } else {
@@ -110,7 +105,6 @@ export async function PUT(request: NextRequest) {
                 SET
                     email = ${email || null},
                     email_notification_enabled = ${email_notification_enabled || false},
-                    web_push_enabled = ${web_push_enabled || false},
                     updated_at = CURRENT_TIMESTAMP
                 WHERE user_id = ${user.id}
             `;
@@ -121,7 +115,6 @@ export async function PUT(request: NextRequest) {
             settings: {
                 email: email || null,
                 email_notification_enabled: email_notification_enabled || false,
-                web_push_enabled: web_push_enabled || false,
             },
         });
     } catch (error) {

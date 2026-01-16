@@ -8,7 +8,6 @@ import { createClient } from '@/lib/supabase/client';
 interface NotificationSettings {
     email: string | null;
     email_notification_enabled: boolean;
-    web_push_enabled: boolean;
 }
 
 export default function NotificationSettingsPage() {
@@ -19,12 +18,10 @@ export default function NotificationSettingsPage() {
     const [settings, setSettings] = useState<NotificationSettings>({
         email: null,
         email_notification_enabled: false,
-        web_push_enabled: false,
     });
     const [email, setEmail] = useState('');
     const [loginEmail, setLoginEmail] = useState<string | null>(null);
     const [emailEnabled, setEmailEnabled] = useState(false);
-    const [webPushEnabled, setWebPushEnabled] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
     useEffect(() => {
@@ -65,7 +62,6 @@ export default function NotificationSettingsPage() {
                 // 設定に保存されているメールアドレスがあればそれを使用、なければログインメールアドレスを使用
                 setEmail(data.settings.email || data.loginEmail || '');
                 setEmailEnabled(data.settings.email_notification_enabled || false);
-                setWebPushEnabled(data.settings.web_push_enabled || false);
                 if (data.loginEmail) {
                     setLoginEmail(data.loginEmail);
                 }
@@ -102,7 +98,6 @@ export default function NotificationSettingsPage() {
                 body: JSON.stringify({
                     email: emailEnabled ? email : null,
                     email_notification_enabled: emailEnabled,
-                    web_push_enabled: webPushEnabled,
                 }),
             });
 
@@ -131,66 +126,6 @@ export default function NotificationSettingsPage() {
         }
     };
 
-    const handleWebPushToggle = async (enabled: boolean) => {
-        setWebPushEnabled(enabled);
-
-        if (enabled) {
-            // Web Push通知を有効にする場合は、ブラウザの許可を求める
-            try {
-                const registration = await navigator.serviceWorker.ready;
-                const vapidPublicKey = process.env.NEXT_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY;
-                if (!vapidPublicKey) {
-                    throw new Error('VAPID public key is not set');
-                }
-                const subscription = await registration.pushManager.subscribe({
-                    userVisibleOnly: true,
-                    applicationServerKey: urlBase64ToUint8Array(vapidPublicKey) as BufferSource,
-                });
-
-                // サブスクリプションをサーバーに送信
-                const response = await fetch('/api/push/subscribe', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ subscription }),
-                });
-
-                if (!response.ok) {
-                    setWebPushEnabled(false);
-                    setMessage({ type: 'error', text: 'Web Push通知の有効化に失敗しました' });
-                }
-            } catch (error) {
-                console.error('Failed to enable web push:', error);
-                setWebPushEnabled(false);
-                setMessage({ type: 'error', text: 'Web Push通知の有効化に失敗しました。ブラウザの通知許可を確認してください。' });
-            }
-        } else {
-            // Web Push通知を無効にする場合は、サブスクリプションを削除
-            try {
-                await fetch('/api/push/unsubscribe', {
-                    method: 'POST',
-                });
-            } catch (error) {
-                console.error('Failed to disable web push:', error);
-            }
-        }
-    };
-
-    // VAPID公開鍵をUint8Arrayに変換（Web Push用）
-    const urlBase64ToUint8Array = (base64String: string): Uint8Array => {
-        const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-        const base64 = (base64String + padding)
-            .replace(/\-/g, '+')
-            .replace(/_/g, '/');
-
-        const rawData = window.atob(base64);
-        const buffer = new ArrayBuffer(rawData.length);
-        const outputArray = new Uint8Array(buffer);
-
-        for (let i = 0; i < rawData.length; ++i) {
-            outputArray[i] = rawData.charCodeAt(i);
-        }
-        return outputArray;
-    };
 
     if (loading || !userId) {
         return (
@@ -251,30 +186,6 @@ export default function NotificationSettingsPage() {
                                 </p>
                             </div>
                         )}
-                    </div>
-                </div>
-
-                {/* Web Push通知設定 */}
-                <div className="card bg-base-100 shadow-xl mb-6">
-                    <div className="card-body">
-                        <h2 className="card-title text-xl mb-4">Web Push通知設定</h2>
-
-                        <div className="form-control mb-4">
-                            <label className="label cursor-pointer">
-                                <span className="label-text">Web Push通知を有効にする</span>
-                                <input
-                                    type="checkbox"
-                                    className="toggle toggle-primary"
-                                    checked={webPushEnabled}
-                                    onChange={(e) => handleWebPushToggle(e.target.checked)}
-                                />
-                            </label>
-                        </div>
-
-                        <p className="text-sm text-base-content/70">
-                            ブラウザが開いていなくても、タスクの期日・通知時刻に通知が届きます。
-                            初回はブラウザの通知許可が必要です。
-                        </p>
                     </div>
                 </div>
 
