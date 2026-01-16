@@ -310,8 +310,43 @@ export async function sendWebPushNotification(
         console.log(`[WebPush] Found ${subscriptions.length} subscription(s) for user ${userId}`);
         
         if (subscriptions.length === 0) {
+            // デバッグ: このユーザーIDで検索したが見つからなかった
+            // 念のため、すべてのユーザーのサブスクリプションを確認
+            const allUserSubscriptions = await sql`
+                SELECT user_id, endpoint, created_at, updated_at
+                FROM web_push_subscriptions
+                ORDER BY created_at DESC
+                LIMIT 20
+            `;
+            console.log(`[WebPush] Debug: Looking for subscriptions for user ${userId}`);
+            console.log(`[WebPush] Debug: All subscriptions in DB (showing user_ids):`, 
+                allUserSubscriptions.map((s: any) => ({
+                    user_id: s.user_id,
+                    matches_target: s.user_id === userId,
+                    endpoint_preview: s.endpoint.substring(0, 50) + '...'
+                }))
+            );
+            
+            // ユーザーIDが完全一致しない場合も確認（文字列比較の問題など）
+            const similarSubscriptions = await sql`
+                SELECT user_id, endpoint, created_at, updated_at
+                FROM web_push_subscriptions
+                WHERE user_id::text LIKE ${`%${userId}%`}
+                LIMIT 10
+            `;
+            if (similarSubscriptions.length > 0) {
+                console.log(`[WebPush] Debug: Found ${similarSubscriptions.length} subscription(s) with similar user_id:`, 
+                    similarSubscriptions.map((s: any) => ({
+                        user_id: s.user_id,
+                        user_id_type: typeof s.user_id,
+                        target_user_id: userId,
+                        target_user_id_type: typeof userId
+                    }))
+                );
+            }
+            
             const errorMsg = `No web push subscription found for user ${userId}`;
-            console.log(`[WebPush] ${errorMsg}`);
+            console.error(`[WebPush] ${errorMsg}`);
             return { success: false, error: errorMsg };
         }
 
@@ -462,8 +497,19 @@ export async function sendNotificationsForDateTime(
 
         // Web Push通知を送信
         // 注意: SQLクエリで既に時刻でフィルタリングされているので、重複チェックは不要
+        console.log(`[Notification] Checking web_push_enabled for user ${task.userId}: ${setting.web_push_enabled}`);
+        
         if (setting.web_push_enabled) {
             console.log(`[WebPush] Attempting to send push notification to user ${task.userId} for task ${task.taskId}`);
+            
+            // デバッグ: サブスクリプションの存在を事前確認
+            const preCheck = await sql`
+                SELECT COUNT(*) as count
+                FROM web_push_subscriptions
+                WHERE user_id = ${task.userId}
+            `;
+            console.log(`[WebPush] Pre-check: User ${task.userId} has ${preCheck[0].count} subscription(s) in database`);
+            
             const pushResult = await sendWebPushNotification(
                 task.userId,
                 task.title,
@@ -481,7 +527,7 @@ export async function sendNotificationsForDateTime(
                 console.error(`[WebPush] ${errorMsg}`);
             }
         } else {
-            console.log(`[WebPush] Web push is disabled for user ${task.userId}`);
+            console.log(`[WebPush] Web push is disabled for user ${task.userId} (web_push_enabled=false)`);
         }
     }
 
