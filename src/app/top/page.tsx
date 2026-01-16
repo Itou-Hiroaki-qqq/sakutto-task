@@ -135,11 +135,12 @@ function TopPageContent() {
                     hasChanges = true;
                 } else {
                     // 完了状態が同じでも、他の変更があれば更新
+                    // DisplayTask型で比較可能なプロパティのみチェック
                     const taskChanged = 
                         cachedTask.title !== latestTask.title ||
-                        cachedTask.description !== latestTask.description ||
-                        cachedTask.priority !== latestTask.priority ||
-                        JSON.stringify(cachedTask.recurrence_type) !== JSON.stringify(latestTask.recurrence_type);
+                        cachedTask.notification_time !== latestTask.notification_time ||
+                        cachedTask.due_date.getTime() !== latestTask.due_date.getTime() ||
+                        cachedTask.date.getTime() !== latestTask.date.getTime();
                     
                     if (taskChanged) {
                         merged.push(latestTask);
