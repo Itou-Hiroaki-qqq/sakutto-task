@@ -3,7 +3,7 @@ import { sendNotificationsForDateTime } from '@/lib/notifications';
 import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 
-// GitHub Actions Cron Jobから呼び出されるエンドポイント
+// cron-job.orgから呼び出されるエンドポイント
 // このエンドポイントは5分ごとに実行される想定
 export async function GET(request: NextRequest) {
     try {
@@ -21,20 +21,18 @@ export async function GET(request: NextRequest) {
         // 日本時間（JST）に変換
         const jstTime = toZonedTime(now, 'Asia/Tokyo');
         
-        // 時刻を5分刻みに丸める（GitHub Actionsのcron実行遅延に対応）
+        // 時刻を5分刻みに丸める
         const minutes = jstTime.getMinutes();
         const roundedMinutes = Math.floor(minutes / 5) * 5;
         const roundedTime = new Date(jstTime);
         roundedTime.setMinutes(roundedMinutes, 0, 0);
         
-        // 過去60分間のすべての5分刻み時刻をチェック（cron実行の不規則な間隔に対応）
-        // GitHub Actionsのcronは設定では5分ごとだが、実際の実行間隔は不規則（10分～1時間程度）
-        // そのため、過去60分分のすべての5分刻み時刻をチェックすることで、確実に通知を送信する
+        // cron-job.orgは正確に5分ごとに実行されるため、現在時刻の前後5分をチェックするだけで十分
+        // ただし、数秒～1分程度の遅延を考慮して、-5分～+5分の範囲をチェック
         const timeChecks: Array<{ date: Date; time: string }> = [];
         
-        // 過去60分～未来5分のすべての5分刻み時刻をチェック（合計13個の時刻）
-        // -60分, -55分, -50分, ..., -5分, 0分（現在）, +5分
-        for (let offset = -60; offset <= 5; offset += 5) {
+        // 過去5分～未来5分の5分刻み時刻をチェック（合計3個の時刻: -5分, 0分（現在）, +5分）
+        for (let offset = -5; offset <= 5; offset += 5) {
             const checkTime = new Date(roundedTime);
             checkTime.setMinutes(checkTime.getMinutes() + offset);
             // 日付が変わる場合は自動的に処理される（Dateオブジェクトが自動調整）
