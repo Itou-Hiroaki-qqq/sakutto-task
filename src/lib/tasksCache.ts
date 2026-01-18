@@ -18,10 +18,10 @@ function getCacheKey(userId: string): string {
     return `${CACHE_KEY_PREFIX}${userId}`;
 }
 
-// 現在日±1ヶ月の範囲内かどうかをチェック
+// 現在日より前の1ヶ月と現在日より後の2ヶ月の範囲内かどうかをチェック
 export function isWithinCurrentMonthRange(date: Date, centerDate: Date = new Date()): boolean {
     const startDate = subMonths(centerDate, 1);
-    const endDate = addMonths(centerDate, 1);
+    const endDate = addMonths(centerDate, 2);
     
     const checkDate = startOfDay(date);
     const start = startOfDay(startDate);

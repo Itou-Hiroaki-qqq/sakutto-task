@@ -94,7 +94,7 @@ function TopPageContent() {
                     loadTasksFromAPI(uid, selectedDate, true, { current: isMounted });
                 }
 
-                // 段階的な事前読み込みを開始（現在日±1ヶ月の範囲内）
+                // 段階的な事前読み込みを開始（現在日より前の1ヶ月と現在日より後の2ヶ月の範囲内）
                 const prefetchMountedRef = { current: isMounted };
                 const today = new Date();
                 prefetchMonthRange(uid, today, prefetchMountedRef);
@@ -222,7 +222,7 @@ function TopPageContent() {
                     uid,
                     { [dateStr]: mergedTasks },
                     format(subMonths(date, 1), 'yyyy-MM-dd'),
-                    format(addMonths(date, 1), 'yyyy-MM-dd')
+                    format(addMonths(date, 2), 'yyyy-MM-dd')
                 );
             }
 
@@ -249,11 +249,11 @@ function TopPageContent() {
         }
     };
 
-    // 現在日±1ヶ月の範囲内の日付リストを生成（現在日から近い順にソート）
+    // 現在日より前の1ヶ月と現在日より後の2ヶ月の範囲内の日付リストを生成（現在日から近い順にソート）
     const generateDateListForPrefetch = (centerDate: Date): Date[] => {
         const dates: Date[] = [];
         const startDate = subMonths(centerDate, 1);
-        const endDate = addMonths(centerDate, 1);
+        const endDate = addMonths(centerDate, 2);
         
         let currentDate = startOfDay(startDate);
         const end = startOfDay(endDate);
@@ -323,7 +323,7 @@ function TopPageContent() {
                                     uid,
                                     { [dateStr]: fetchedTasks },
                                     format(subMonths(date, 1), 'yyyy-MM-dd'),
-                                    format(addMonths(date, 1), 'yyyy-MM-dd')
+                                    format(addMonths(date, 2), 'yyyy-MM-dd')
                                 );
                             }
                         }
@@ -354,7 +354,7 @@ function TopPageContent() {
             return; // 範囲外の場合はスキップ
         }
         
-        // 現在日±1ヶ月の範囲内の日付リストを生成（現在日から近い順）
+        // 現在日より前の1ヶ月と現在日より後の2ヶ月の範囲内の日付リストを生成（現在日から近い順）
         const allDates = generateDateListForPrefetch(centerDate);
         
         // 今日は既に読み込まれているはずなので除外
@@ -375,7 +375,7 @@ function TopPageContent() {
             return diff > 1 && diff <= 7;
         });
         
-        // フェーズ3: 残り（±1ヶ月の残り）
+        // フェーズ3: 残り（過去1ヶ月と未来2ヶ月の残り）
         const phase3Dates = datesToPrefetch.filter(date => {
             const diff = Math.abs(differenceInDays(date, centerDate));
             return diff > 7;
@@ -448,7 +448,7 @@ function TopPageContent() {
                             uid,
                             { [dateStr]: fetchedTasks },
                             format(subMonths(date, 1), 'yyyy-MM-dd'),
-                            format(addMonths(date, 1), 'yyyy-MM-dd')
+                            format(addMonths(date, 2), 'yyyy-MM-dd')
                         );
                     }
                 }
@@ -571,7 +571,7 @@ function TopPageContent() {
                     userId,
                     { [dateStr]: updatedTasks },
                     format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
-                    format(addMonths(selectedDate, 1), 'yyyy-MM-dd')
+                    format(addMonths(selectedDate, 2), 'yyyy-MM-dd')
                 );
             }
         }
@@ -611,7 +611,7 @@ function TopPageContent() {
                             userId,
                             { [dateStr]: updatedTasks },
                             format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
-                            format(addMonths(selectedDate, 1), 'yyyy-MM-dd')
+                            format(addMonths(selectedDate, 2), 'yyyy-MM-dd')
                         );
                         setTasks(updatedTasks);
                     }
