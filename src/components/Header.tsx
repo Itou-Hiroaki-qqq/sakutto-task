@@ -122,6 +122,14 @@ export default function Header({ currentDate = new Date(), onDateChange }: Heade
                     </li>
                     <li>
                         <Link
+                            href="/settings/event-calendar"
+                            className={pathname === '/settings/event-calendar' ? 'active' : ''}
+                        >
+                            予定表の読み込み
+                        </Link>
+                    </li>
+                    <li>
+                        <Link
                             href="/settings/data"
                             className={pathname === '/settings/data' ? 'active' : ''}
                         >
