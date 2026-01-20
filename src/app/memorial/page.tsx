@@ -20,6 +20,7 @@ function MemorialEditPageContent() {
     // フォーム状態
     const [title, setTitle] = useState('');
     const [timeSuggestion, setTimeSuggestion] = useState<{ pattern: string; converted: string; index: number } | null>(null);
+    const [dismissedPatterns, setDismissedPatterns] = useState<Set<string>>(new Set()); // 無効化されたパターン（位置:パターン）
     const titleInputRef = useRef<HTMLInputElement>(null);
     const [dueDate, setDueDate] = useState(initialDate);
     const [notificationEnabled, setNotificationEnabled] = useState(false);
@@ -319,11 +320,17 @@ function MemorialEditPageContent() {
             const hour = parseInt(lastMatch.substring(0, 2));
             const minute = parseInt(lastMatch.substring(2, 4));
             if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
-                return {
-                    pattern: lastMatch,
-                    converted: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
-                    index: index
-                };
+                // 無効化されたパターンでないか確認（位置に関係なく、パターン自体が無効化されていないかチェック）
+                const patternKey = `${index}:${lastMatch}`;
+                // 同じパターンが別の位置で無効化されていないかもチェック
+                const isDismissed = Array.from(dismissedPatterns).some(key => key.endsWith(`:${lastMatch}`));
+                if (!isDismissed && !dismissedPatterns.has(patternKey)) {
+                    return {
+                        pattern: lastMatch,
+                        converted: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
+                        index: index
+                    };
+                }
             }
         }
 
@@ -335,11 +342,17 @@ function MemorialEditPageContent() {
             const hour = parseInt(lastMatch.substring(0, 1));
             const minute = parseInt(lastMatch.substring(1, 3));
             if (hour >= 0 && hour <= 9 && minute >= 0 && minute <= 59) {
-                return {
-                    pattern: lastMatch,
-                    converted: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
-                    index: index
-                };
+                // 無効化されたパターンでないか確認（位置に関係なく、パターン自体が無効化されていないかチェック）
+                const patternKey = `${index}:${lastMatch}`;
+                // 同じパターンが別の位置で無効化されていないかもチェック
+                const isDismissed = Array.from(dismissedPatterns).some(key => key.endsWith(`:${lastMatch}`));
+                if (!isDismissed && !dismissedPatterns.has(patternKey)) {
+                    return {
+                        pattern: lastMatch,
+                        converted: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
+                        index: index
+                    };
+                }
             }
         }
 
@@ -355,7 +368,47 @@ function MemorialEditPageContent() {
 
     const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const newTitle = e.target.value;
+        const previousTitle = title;
         setTitle(newTitle);
+
+        // 既存の候補がある場合の処理
+        if (timeSuggestion) {
+            const existingPattern = timeSuggestion.pattern;
+            const existingIndex = timeSuggestion.index;
+            const patternEndIndex = existingIndex + existingPattern.length;
+            
+            // テキストが短くなった場合は候補をクリア
+            if (newTitle.length < patternEndIndex) {
+                setTimeSuggestion(null);
+                const suggestion = detectTimePattern(newTitle);
+                setTimeSuggestion(suggestion);
+                return;
+            }
+            
+            // 既存のパターンが同じ位置に存在しない場合は候補をクリア
+            const patternAtPosition = newTitle.substring(existingIndex, patternEndIndex);
+            if (patternAtPosition !== existingPattern) {
+                setTimeSuggestion(null);
+                const suggestion = detectTimePattern(newTitle);
+                setTimeSuggestion(suggestion);
+                return;
+            }
+            
+            // パターンの直後に追加の文字がある場合（スペースや他の文字が追加された場合）は候補を無効化
+            // ただし、テキストが長くなっている場合のみ（削除の場合は除く）
+            if (newTitle.length > previousTitle.length && newTitle.length > patternEndIndex) {
+                const charAfterPattern = newTitle[patternEndIndex];
+                // スペース、改行、または非数字文字が追加された場合は候補を無効化
+                if (charAfterPattern && (charAfterPattern === ' ' || charAfterPattern === '\n' || !/\d/.test(charAfterPattern))) {
+                    // このパターンを無効化リストに追加
+                    const patternKey = `${existingIndex}:${existingPattern}`;
+                    setDismissedPatterns(prev => new Set(prev).add(patternKey));
+                    setTimeSuggestion(null);
+                    // クリア後は新しいパターンを検出しない（ユーザーが別の入力に移ったため）
+                    return;
+                }
+            }
+        }
 
         // 時間パターンを検出
         const suggestion = detectTimePattern(newTitle);
@@ -382,8 +435,10 @@ function MemorialEditPageContent() {
     };
 
     const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        // スペースやエンターを押したら変換候補をクリア
-        if (e.key === ' ' || e.key === 'Enter') {
+        // スペースやエンターを押したら変換候補を無効化
+        if ((e.key === ' ' || e.key === 'Enter') && timeSuggestion) {
+            const patternKey = `${timeSuggestion.index}:${timeSuggestion.pattern}`;
+            setDismissedPatterns(prev => new Set(prev).add(patternKey));
             setTimeSuggestion(null);
         }
     };

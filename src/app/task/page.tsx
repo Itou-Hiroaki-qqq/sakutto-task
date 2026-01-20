@@ -20,10 +20,11 @@ function TaskEditPageContent() {
     const initialDate = dateParam ? parseISO(dateParam) : new Date();
 
     // フォーム状態
-  const [title, setTitle] = useState('');
-  const [timeSuggestion, setTimeSuggestion] = useState<{ pattern: string; converted: string; index: number } | null>(null);
-  const titleInputRef = useRef<HTMLInputElement>(null);
-  const [dueDate, setDueDate] = useState(initialDate);
+    const [title, setTitle] = useState('');
+    const [timeSuggestion, setTimeSuggestion] = useState<{ pattern: string; converted: string; index: number } | null>(null);
+    const [dismissedPatterns, setDismissedPatterns] = useState<Set<string>>(new Set()); // 無効化されたパターン（位置:パターン）
+    const titleInputRef = useRef<HTMLInputElement>(null);
+    const [dueDate, setDueDate] = useState(initialDate);
     const [notificationEnabled, setNotificationEnabled] = useState(false);
     const [notificationTime, setNotificationTime] = useState('');
     const [recurrenceType, setRecurrenceType] = useState<RecurrenceType | null>(null);
@@ -236,7 +237,7 @@ function TaskEditPageContent() {
                         }
                     }
                 }
-                
+
                 // 元のページに戻る（日付パラメータを保持）
                 const returnDate = searchParams.get('date');
                 const returnUrl = searchParams.get('returnUrl') || '/top';
@@ -263,14 +264,14 @@ function TaskEditPageContent() {
         if (!timeString || !timeString.includes(':')) {
             return timeString;
         }
-        
+
         const [hours, minutes] = timeString.split(':').map(Number);
         const roundedMinutes = Math.round(minutes / 5) * 5;
-        
+
         if (roundedMinutes === 60) {
             return `${String(hours + 1).padStart(2, '0')}:00`;
         }
-        
+
         return `${String(hours).padStart(2, '0')}:${String(roundedMinutes).padStart(2, '0')}`;
     };
 
@@ -313,7 +314,7 @@ function TaskEditPageContent() {
         }
 
         const hasRecurrence = recurrenceType !== null;
-        
+
         // 削除オプションが指定されていない場合、確認ダイアログを表示
         if (!deleteOption) {
             setShowDeleteDialog(true);
@@ -323,7 +324,7 @@ function TaskEditPageContent() {
         setDeleting(true);
         try {
             const payload: any = {};
-            
+
             if (hasRecurrence) {
                 payload.deleteOption = deleteOption;
                 payload.targetDate = format(dueDate, 'yyyy-MM-dd');
@@ -348,7 +349,7 @@ function TaskEditPageContent() {
                         }
                     }
                 }
-                
+
                 // 元のページに戻る（日付パラメータを保持）
                 const returnDate = searchParams.get('date');
                 const returnUrl = searchParams.get('returnUrl') || '/top';
@@ -391,11 +392,17 @@ function TaskEditPageContent() {
             const hour = parseInt(lastMatch.substring(0, 2));
             const minute = parseInt(lastMatch.substring(2, 4));
             if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
-                return {
-                    pattern: lastMatch,
-                    converted: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
-                    index: index
-                };
+                // 無効化されたパターンでないか確認（位置に関係なく、パターン自体が無効化されていないかチェック）
+                const patternKey = `${index}:${lastMatch}`;
+                // 同じパターンが別の位置で無効化されていないかもチェック
+                const isDismissed = Array.from(dismissedPatterns).some(key => key.endsWith(`:${lastMatch}`));
+                if (!isDismissed && !dismissedPatterns.has(patternKey)) {
+                    return {
+                        pattern: lastMatch,
+                        converted: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
+                        index: index
+                    };
+                }
             }
         }
 
@@ -407,11 +414,17 @@ function TaskEditPageContent() {
             const hour = parseInt(lastMatch.substring(0, 1));
             const minute = parseInt(lastMatch.substring(1, 3));
             if (hour >= 0 && hour <= 9 && minute >= 0 && minute <= 59) {
-                return {
-                    pattern: lastMatch,
-                    converted: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
-                    index: index
-                };
+                // 無効化されたパターンでないか確認（位置に関係なく、パターン自体が無効化されていないかチェック）
+                const patternKey = `${index}:${lastMatch}`;
+                // 同じパターンが別の位置で無効化されていないかもチェック
+                const isDismissed = Array.from(dismissedPatterns).some(key => key.endsWith(`:${lastMatch}`));
+                if (!isDismissed && !dismissedPatterns.has(patternKey)) {
+                    return {
+                        pattern: lastMatch,
+                        converted: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
+                        index: index
+                    };
+                }
             }
         }
 
@@ -427,7 +440,47 @@ function TaskEditPageContent() {
 
     const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const newTitle = e.target.value;
+        const previousTitle = title;
         setTitle(newTitle);
+
+        // 既存の候補がある場合の処理
+        if (timeSuggestion) {
+            const existingPattern = timeSuggestion.pattern;
+            const existingIndex = timeSuggestion.index;
+            const patternEndIndex = existingIndex + existingPattern.length;
+
+            // テキストが短くなった場合は候補をクリア
+            if (newTitle.length < patternEndIndex) {
+                setTimeSuggestion(null);
+                const suggestion = detectTimePattern(newTitle);
+                setTimeSuggestion(suggestion);
+                return;
+            }
+
+            // 既存のパターンが同じ位置に存在しない場合は候補をクリア
+            const patternAtPosition = newTitle.substring(existingIndex, patternEndIndex);
+            if (patternAtPosition !== existingPattern) {
+                setTimeSuggestion(null);
+                const suggestion = detectTimePattern(newTitle);
+                setTimeSuggestion(suggestion);
+                return;
+            }
+
+            // パターンの直後に追加の文字がある場合（スペースや他の文字が追加された場合）は候補を無効化
+            // ただし、テキストが長くなっている場合のみ（削除の場合は除く）
+            if (newTitle.length > previousTitle.length && newTitle.length > patternEndIndex) {
+                const charAfterPattern = newTitle[patternEndIndex];
+                // スペース、改行、または非数字文字が追加された場合は候補を無効化
+                if (charAfterPattern && (charAfterPattern === ' ' || charAfterPattern === '\n' || !/\d/.test(charAfterPattern))) {
+                    // このパターンを無効化リストに追加
+                    const patternKey = `${existingIndex}:${existingPattern}`;
+                    setDismissedPatterns(prev => new Set(prev).add(patternKey));
+                    setTimeSuggestion(null);
+                    // クリア後は新しいパターンを検出しない（ユーザーが別の入力に移ったため）
+                    return;
+                }
+            }
+        }
 
         // 時間パターンを検出
         const suggestion = detectTimePattern(newTitle);
@@ -441,7 +494,7 @@ function TaskEditPageContent() {
             const newTitle = before + timeSuggestion.converted + ' ' + after;
             setTitle(newTitle);
             setTimeSuggestion(null);
-            
+
             // フォーカスを維持し、カーソル位置を変換した時間の後（半角スペースの後）に移動
             setTimeout(() => {
                 if (titleInputRef.current) {
@@ -454,8 +507,10 @@ function TaskEditPageContent() {
     };
 
     const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        // スペースやエンターを押したら変換候補をクリア
-        if (e.key === ' ' || e.key === 'Enter') {
+        // スペースやエンターを押したら変換候補を無効化
+        if ((e.key === ' ' || e.key === 'Enter') && timeSuggestion) {
+            const patternKey = `${timeSuggestion.index}:${timeSuggestion.pattern}`;
+            setDismissedPatterns(prev => new Set(prev).add(patternKey));
             setTimeSuggestion(null);
         }
     };
@@ -819,7 +874,7 @@ function TaskEditPageContent() {
                         {recurrenceType !== null ? (
                             <>
                                 <p className="mb-6">このタスクは繰り返し設定が有効です。削除方法を選択してください。</p>
-                                
+
                                 <div className="space-y-3 mb-6">
                                     <label className="flex items-center gap-3 cursor-pointer">
                                         <input
@@ -876,7 +931,7 @@ function TaskEditPageContent() {
                         ) : (
                             <>
                                 <p className="mb-6">このタスクを削除してもよろしいですか？</p>
-                                
+
                                 <div className="flex justify-end gap-3">
                                     <button
                                         onClick={() => {
