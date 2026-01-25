@@ -74,6 +74,19 @@ function TaskEditPageContent() {
         checkAuth();
     }, [router, taskIdParam, searchParams]);
 
+    // ローディングが完了したらタイトル入力欄にフォーカス
+    useEffect(() => {
+        if (!loading && userId) {
+            // DOMが確実にレンダリングされた後にフォーカスを当てる
+            const timer = setTimeout(() => {
+                if (titleInputRef.current) {
+                    titleInputRef.current.focus();
+                }
+            }, 100);
+            return () => clearTimeout(timer);
+        }
+    }, [loading, userId]);
+
     const loadTask = async (taskId: string, userId: string, dateParam?: string | null) => {
         setLoading(true);
         try {
@@ -579,6 +592,7 @@ function TaskEditPageContent() {
                             value={title}
                             onChange={handleTitleChange}
                             onKeyDown={handleTitleKeyDown}
+                            autoFocus={!loading && !!userId}
                         />
                         {timeSuggestion && (
                             <div className="absolute right-2 top-1/2 -translate-y-1/2">
