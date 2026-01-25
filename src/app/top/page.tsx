@@ -594,7 +594,7 @@ function TopPageContent() {
                 throw new Error(errorData.error || '完了状態の更新に失敗しました');
             }
 
-            // 成功後、最新データでキャッシュを更新（差分があれば反映）
+            // 成功後、最新データでキャッシュを更新
             if (isWithinCurrentMonthRange(selectedDate)) {
                 const updatedTasksResponse = await fetch(`/api/tasks?date=${dateStr}`);
                 if (updatedTasksResponse.ok) {
@@ -609,30 +609,45 @@ function TopPageContent() {
                             created_at: task.created_at ? (typeof task.created_at === 'string' ? parseISO(task.created_at) : new Date(task.created_at)) : undefined,
                         }));
                         
-                        // 差分があれば更新（Optimistic UIで既に更新済みなので、サーバー側の変更のみ反映）
-                        // setTasksのコールバック形式で最新の状態を取得
-                        setTasks((currentTasks) => {
-                            const mergedTasks = compareAndMergeTasks(currentTasks, updatedTasks);
-                            if (mergedTasks !== null) {
-                                // キャッシュを更新
-                                updateTasksCache(
-                                    userId,
-                                    { [dateStr]: mergedTasks },
-                                    format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
-                                    format(addMonths(selectedDate, 2), 'yyyy-MM-dd')
-                                );
-                                return mergedTasks;
-                            } else {
-                                // 差分がない場合でも、念のためキャッシュを更新
-                                updateTasksCache(
-                                    userId,
-                                    { [dateStr]: updatedTasks },
-                                    format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
-                                    format(addMonths(selectedDate, 2), 'yyyy-MM-dd')
-                                );
-                                return currentTasks; // 変更がない場合は現在の状態を維持
-                            }
-                        });
+                        // 今日と明日の場合は、サーバーからの最新データを直接優先（キャッシュを無視）
+                        const today = startOfDay(new Date());
+                        const tomorrow = addDays(today, 1);
+                        const isTodayOrTomorrow = isSameDay(selectedDate, today) || isSameDay(selectedDate, tomorrow);
+                        
+                        if (isTodayOrTomorrow) {
+                            // 今日と明日: サーバーからの最新データを直接反映
+                            setTasks(updatedTasks);
+                            updateTasksCache(
+                                userId,
+                                { [dateStr]: updatedTasks },
+                                format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
+                                format(addMonths(selectedDate, 2), 'yyyy-MM-dd')
+                            );
+                        } else {
+                            // その他の日付: 従来通りキャッシュ優先（差分があれば反映）
+                            setTasks((currentTasks) => {
+                                const mergedTasks = compareAndMergeTasks(currentTasks, updatedTasks);
+                                if (mergedTasks !== null) {
+                                    // キャッシュを更新
+                                    updateTasksCache(
+                                        userId,
+                                        { [dateStr]: mergedTasks },
+                                        format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
+                                        format(addMonths(selectedDate, 2), 'yyyy-MM-dd')
+                                    );
+                                    return mergedTasks;
+                                } else {
+                                    // 差分がない場合でも、念のためキャッシュを更新
+                                    updateTasksCache(
+                                        userId,
+                                        { [dateStr]: updatedTasks },
+                                        format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
+                                        format(addMonths(selectedDate, 2), 'yyyy-MM-dd')
+                                    );
+                                    return currentTasks; // 変更がない場合は現在の状態を維持
+                                }
+                            });
+                        }
                     }
                 }
             }
