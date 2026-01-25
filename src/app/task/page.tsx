@@ -3,11 +3,11 @@
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, subMonths, addMonths } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import DatePicker from '@/components/DatePicker';
 import { RecurrenceType } from '@/types/database';
-import { clearTasksCache as clearClientTasksCache, isWithinCurrentMonthRange } from '@/lib/tasksCache';
+import { clearTasksCache as clearClientTasksCache, isWithinCurrentMonthRange, updateTasksCache } from '@/lib/tasksCache';
 
 function TaskEditPageContent() {
     const router = useRouter();
@@ -238,15 +238,45 @@ function TaskEditPageContent() {
             });
 
             if (response.ok) {
-                // キャッシュを無効化（現在日±1ヶ月の範囲の場合）
+                const responseData = await response.json();
+                
+                // Optimistic UI: 保存成功後、即座にキャッシュを更新（現在日±1ヶ月の範囲の場合）
                 if (userId) {
                     const taskDate = parseISO(format(dueDate, 'yyyy-MM-dd'));
                     if (isWithinCurrentMonthRange(taskDate)) {
-                        // 繰り返しタスクの場合は全体をクリア、単発タスクの場合は該当日のみ
+                        // 保存されたタスクデータを取得してキャッシュを更新
+                        try {
+                            const dateStr = format(dueDate, 'yyyy-MM-dd');
+                            const updatedTasksResponse = await fetch(`/api/tasks?date=${dateStr}`);
+                            if (updatedTasksResponse.ok) {
+                                const updatedData = await updatedTasksResponse.json();
+                                if (updatedData.tasks) {
+                                    // APIから取得したデータの日付をDateオブジェクトに変換
+                                    const updatedTasksRaw: any[] = updatedData.tasks;
+                                    const updatedTasks = updatedTasksRaw.map((task: any) => ({
+                                        ...task,
+                                        date: typeof task.date === 'string' ? parseISO(task.date) : new Date(task.date),
+                                        due_date: typeof task.due_date === 'string' ? parseISO(task.due_date) : new Date(task.due_date),
+                                        created_at: task.created_at ? (typeof task.created_at === 'string' ? parseISO(task.created_at) : new Date(task.created_at)) : undefined,
+                                    }));
+                                    
+                                    // キャッシュを更新
+                                    updateTasksCache(
+                                        userId,
+                                        { [dateStr]: updatedTasks },
+                                        format(subMonths(taskDate, 1), 'yyyy-MM-dd'),
+                                        format(addMonths(taskDate, 2), 'yyyy-MM-dd')
+                                    );
+                                }
+                            }
+                        } catch (cacheError) {
+                            // キャッシュ更新のエラーは無視（次回アクセス時に再取得される）
+                            console.warn('Failed to update cache after save:', cacheError);
+                        }
+                        
+                        // 繰り返しタスクの場合は、影響範囲が広いため全体をクリア
                         if (recurrenceType) {
-                            clearClientTasksCache(userId); // 全体をクリア（繰り返しタスクは複数日に影響するため）
-                        } else {
-                            clearClientTasksCache(userId, format(dueDate, 'yyyy-MM-dd')); // 該当日のみクリア
+                            clearClientTasksCache(userId);
                         }
                     }
                 }
@@ -350,15 +380,56 @@ function TaskEditPageContent() {
             });
 
             if (response.ok) {
-                // キャッシュを無効化（現在日±1ヶ月の範囲の場合）
+                // Optimistic UI: 削除成功後、即座にキャッシュを更新（現在日±1ヶ月の範囲の場合）
                 if (userId) {
                     const taskDate = parseISO(format(dueDate, 'yyyy-MM-dd'));
                     if (isWithinCurrentMonthRange(taskDate)) {
-                        // 繰り返しタスクの場合は全体をクリア、単発タスクの場合は該当日のみ
                         if (hasRecurrence) {
-                            clearClientTasksCache(userId); // 全体をクリア（繰り返しタスクは複数日に影響するため）
+                            // 繰り返しタスクの場合は全体をクリア（複数日に影響するため）
+                            clearClientTasksCache(userId);
                         } else {
-                            clearClientTasksCache(userId, format(dueDate, 'yyyy-MM-dd')); // 該当日のみクリア
+                            // 単発タスクの場合は、該当日のキャッシュを更新（削除されたタスクを除外）
+                            try {
+                                const dateStr = format(dueDate, 'yyyy-MM-dd');
+                                const updatedTasksResponse = await fetch(`/api/tasks?date=${dateStr}`);
+                                if (updatedTasksResponse.ok) {
+                                    const updatedData = await updatedTasksResponse.json();
+                                    if (updatedData.tasks) {
+                                        // APIから取得したデータの日付をDateオブジェクトに変換
+                                        const updatedTasksRaw: any[] = updatedData.tasks;
+                                        const updatedTasks = updatedTasksRaw.map((task: any) => ({
+                                            ...task,
+                                            date: typeof task.date === 'string' ? parseISO(task.date) : new Date(task.date),
+                                            due_date: typeof task.due_date === 'string' ? parseISO(task.due_date) : new Date(task.due_date),
+                                            created_at: task.created_at ? (typeof task.created_at === 'string' ? parseISO(task.created_at) : new Date(task.created_at)) : undefined,
+                                        }));
+                                        
+                                        // キャッシュを更新
+                                        updateTasksCache(
+                                            userId,
+                                            { [dateStr]: updatedTasks },
+                                            format(subMonths(taskDate, 1), 'yyyy-MM-dd'),
+                                            format(addMonths(taskDate, 2), 'yyyy-MM-dd')
+                                        );
+                                    } else {
+                                        // タスクが0件の場合もキャッシュを更新
+                                        updateTasksCache(
+                                            userId,
+                                            { [dateStr]: [] },
+                                            format(subMonths(taskDate, 1), 'yyyy-MM-dd'),
+                                            format(addMonths(taskDate, 2), 'yyyy-MM-dd')
+                                        );
+                                    }
+                                } else {
+                                    // API取得に失敗した場合は該当日のキャッシュをクリア
+                                    clearClientTasksCache(userId, dateStr);
+                                }
+                            } catch (cacheError) {
+                                // キャッシュ更新のエラーは無視（次回アクセス時に再取得される）
+                                console.warn('Failed to update cache after delete:', cacheError);
+                                const dateStr = format(dueDate, 'yyyy-MM-dd');
+                                clearClientTasksCache(userId, dateStr);
+                            }
                         }
                     }
                 }

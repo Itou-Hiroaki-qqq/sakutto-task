@@ -553,7 +553,8 @@ function TopPageContent() {
 
         const dateStr = format(selectedDate, 'yyyy-MM-dd');
 
-        // 楽観的UI更新
+        // Optimistic UI: 即座にUIを更新
+        const previousTasks = [...tasks];
         setTasks((prevTasks) =>
             prevTasks.map((task) =>
                 task.task_id === taskId ? { ...task, completed } : task
@@ -589,10 +590,11 @@ function TopPageContent() {
             });
 
             if (!response.ok) {
-                throw new Error('Failed to update completion status');
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || '完了状態の更新に失敗しました');
             }
 
-            // 成功後、最新データでキャッシュを更新
+            // 成功後、最新データでキャッシュを更新（差分があれば反映）
             if (isWithinCurrentMonthRange(selectedDate)) {
                 const updatedTasksResponse = await fetch(`/api/tasks?date=${dateStr}`);
                 if (updatedTasksResponse.ok) {
@@ -607,29 +609,56 @@ function TopPageContent() {
                             created_at: task.created_at ? (typeof task.created_at === 'string' ? parseISO(task.created_at) : new Date(task.created_at)) : undefined,
                         }));
                         
-                        updateTasksCache(
-                            userId,
-                            { [dateStr]: updatedTasks },
-                            format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
-                            format(addMonths(selectedDate, 2), 'yyyy-MM-dd')
-                        );
-                        setTasks(updatedTasks);
+                        // 差分があれば更新（Optimistic UIで既に更新済みなので、サーバー側の変更のみ反映）
+                        // setTasksのコールバック形式で最新の状態を取得
+                        setTasks((currentTasks) => {
+                            const mergedTasks = compareAndMergeTasks(currentTasks, updatedTasks);
+                            if (mergedTasks !== null) {
+                                // キャッシュを更新
+                                updateTasksCache(
+                                    userId,
+                                    { [dateStr]: mergedTasks },
+                                    format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
+                                    format(addMonths(selectedDate, 2), 'yyyy-MM-dd')
+                                );
+                                return mergedTasks;
+                            } else {
+                                // 差分がない場合でも、念のためキャッシュを更新
+                                updateTasksCache(
+                                    userId,
+                                    { [dateStr]: updatedTasks },
+                                    format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
+                                    format(addMonths(selectedDate, 2), 'yyyy-MM-dd')
+                                );
+                                return currentTasks; // 変更がない場合は現在の状態を維持
+                            }
+                        });
                     }
                 }
             }
         } catch (error) {
             console.error('Failed to toggle completion:', error);
-            // エラー時は元に戻す（楽観的UI更新をロールバック）
-            setTasks((prevTasks) =>
-                prevTasks.map((task) =>
-                    task.task_id === taskId ? { ...task, completed: !completed } : task
-                )
-            );
+            
+            // エラー時は元に戻す（Optimistic UI更新をロールバック）
+            setTasks(previousTasks);
             
             // キャッシュも元に戻す
             if (isWithinCurrentMonthRange(selectedDate)) {
-                clearTasksCache(userId, dateStr);
+                const cachedTasks = getCachedTasksForDate(userId, selectedDate);
+                if (cachedTasks) {
+                    updateTasksCache(
+                        userId,
+                        { [dateStr]: cachedTasks },
+                        format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
+                        format(addMonths(selectedDate, 2), 'yyyy-MM-dd')
+                    );
+                } else {
+                    clearTasksCache(userId, dateStr);
+                }
             }
+            
+            // ユーザーにエラーを通知
+            alert(error instanceof Error ? error.message : '完了状態の更新に失敗しました。もう一度お試しください。');
         }
     };
 
