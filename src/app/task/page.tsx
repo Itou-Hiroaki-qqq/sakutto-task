@@ -37,6 +37,7 @@ function TaskEditPageContent() {
     const [saving, setSaving] = useState(false);
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
     const [deleting, setDeleting] = useState(false);
+    const [showSaveScopeDialog, setShowSaveScopeDialog] = useState(false);
 
     useEffect(() => {
         const checkAuth = async () => {
@@ -106,8 +107,18 @@ function TaskEditPageContent() {
                 }
                 setTitle(data.task.title || '');
 
-                // 期日の設定: タスクの元の期日を優先して表示（過去の未完了タスクの場合でも元の期日を表示）
-                setDueDate(data.task.due_date ? new Date(data.task.due_date) : initialDate);
+                // 期日の設定: 繰り返し予定でURLのdateパラメータがある場合は、その日付を表示（開いた発生日を反映）
+                const taskDueDate = data.task.due_date ? new Date(data.task.due_date) : initialDate;
+                if (data.recurrence && dateParam) {
+                    try {
+                        const parsedDate = parseISO(dateParam);
+                        setDueDate(parsedDate);
+                    } catch {
+                        setDueDate(taskDueDate);
+                    }
+                } else {
+                    setDueDate(taskDueDate);
+                }
 
                 setNotificationEnabled(data.task.notification_enabled || false);
                 setNotificationTime(data.task.notification_time || '');
@@ -169,11 +180,26 @@ function TaskEditPageContent() {
         }
     };
 
-    const handleSave = async () => {
+    const handleSave = () => {
         if (!title.trim() || !userId) {
             alert('タイトルを入力してください');
             return;
         }
+        // 繰り返し予定の編集時は範囲選択ダイアログを表示
+        if (taskIdParam && recurrenceType !== null && searchParams.get('date')) {
+            setShowSaveScopeDialog(true);
+            return;
+        }
+        performSave();
+    };
+
+    const performSave = async (updateScope?: 'this_only' | 'all_future') => {
+        if (!title.trim() || !userId) {
+            alert('タイトルを入力してください');
+            return;
+        }
+
+        setShowSaveScopeDialog(false);
 
         // 通知設定が有効な場合、メールアドレスまたはWeb Push設定の確認
         if (notificationEnabled && notificationTime) {
@@ -184,7 +210,6 @@ function TaskEditPageContent() {
                     const hasEmail = settingsData.settings?.email && settingsData.settings?.email_notification_enabled;
                     const hasWebPush = settingsData.settings?.web_push_enabled;
 
-                    // メール通知もWeb Push通知も有効でない場合、通知設定ページへ遷移
                     if (!hasEmail && !hasWebPush) {
                         const returnDate = searchParams.get('date');
                         const returnUrl = `/task${taskIdParam ? `?taskId=${taskIdParam}` : ''}${returnDate ? `&date=${returnDate}` : ''}`;
@@ -195,19 +220,17 @@ function TaskEditPageContent() {
                             router.push(`/settings/notifications?returnUrl=${encodeURIComponent(returnUrl)}`);
                             return;
                         } else {
-                            return; // ユーザーがキャンセルした場合は保存しない
+                            return;
                         }
                     }
                 }
             } catch (error) {
                 console.error('Failed to check notification settings:', error);
-                // エラーが発生しても保存は続行（通知が送信されない可能性があるが、タスク自体は保存される）
             }
         }
 
         setSaving(true);
         try {
-            // カスタム期間の場合、日数と単位を保存
             let customDaysToSave = null;
             let customUnitToSave = null;
             if (recurrenceType === 'custom' && customDays) {
@@ -219,7 +242,7 @@ function TaskEditPageContent() {
                 }
             }
 
-            const payload = {
+            const payload: Record<string, unknown> = {
                 taskId: taskIdParam,
                 title: title.trim(),
                 dueDate: format(dueDate, 'yyyy-MM-dd'),
@@ -230,6 +253,12 @@ function TaskEditPageContent() {
                 customUnit: customUnitToSave,
                 selectedWeekdays: recurrenceType === 'weekdays' ? selectedWeekdays : null,
             };
+            // 繰り返し予定の編集時は範囲を指定
+            if (taskIdParam && recurrenceType && updateScope) {
+                payload.updateScope = updateScope;
+                const dateParam = searchParams.get('date');
+                if (dateParam) payload.targetDate = dateParam;
+            }
 
             const response = await fetch('/api/tasks', {
                 method: taskIdParam ? 'PUT' : 'POST',
@@ -243,39 +272,41 @@ function TaskEditPageContent() {
                 // Optimistic UI: 保存成功後、即座にキャッシュを更新（現在日±1ヶ月の範囲の場合）
                 if (userId) {
                     const taskDate = parseISO(format(dueDate, 'yyyy-MM-dd'));
-                    if (isWithinCurrentMonthRange(taskDate)) {
-                        // 保存されたタスクデータを取得してキャッシュを更新
+                    const dateParam = searchParams.get('date');
+                    const datesToRefresh = new Set<string>([format(dueDate, 'yyyy-MM-dd')]);
+                    if (updateScope === 'this_only' && dateParam) {
+                        datesToRefresh.add(dateParam); // 除外した日付のキャッシュも更新
+                    }
+
+                    if (isWithinCurrentMonthRange(taskDate) || (dateParam && isWithinCurrentMonthRange(parseISO(dateParam)))) {
                         try {
-                            const dateStr = format(dueDate, 'yyyy-MM-dd');
-                            const updatedTasksResponse = await fetch(`/api/tasks?date=${dateStr}`);
-                            if (updatedTasksResponse.ok) {
-                                const updatedData = await updatedTasksResponse.json();
-                                if (updatedData.tasks) {
-                                    // APIから取得したデータの日付をDateオブジェクトに変換
-                                    const updatedTasksRaw: any[] = updatedData.tasks;
-                                    const updatedTasks = updatedTasksRaw.map((task: any) => ({
-                                        ...task,
-                                        date: typeof task.date === 'string' ? parseISO(task.date) : new Date(task.date),
-                                        due_date: typeof task.due_date === 'string' ? parseISO(task.due_date) : new Date(task.due_date),
-                                        created_at: task.created_at ? (typeof task.created_at === 'string' ? parseISO(task.created_at) : new Date(task.created_at)) : undefined,
-                                    }));
-                                    
-                                    // キャッシュを更新
-                                    updateTasksCache(
-                                        userId,
-                                        { [dateStr]: updatedTasks },
-                                        format(subMonths(taskDate, 1), 'yyyy-MM-dd'),
-                                        format(addMonths(taskDate, 2), 'yyyy-MM-dd')
-                                    );
+                            for (const dateStr of datesToRefresh) {
+                                const updatedTasksResponse = await fetch(`/api/tasks?date=${dateStr}`);
+                                if (updatedTasksResponse.ok) {
+                                    const updatedData = await updatedTasksResponse.json();
+                                    if (updatedData.tasks) {
+                                        const updatedTasksRaw: any[] = updatedData.tasks;
+                                        const updatedTasks = updatedTasksRaw.map((task: any) => ({
+                                            ...task,
+                                            date: typeof task.date === 'string' ? parseISO(task.date) : new Date(task.date),
+                                            due_date: typeof task.due_date === 'string' ? parseISO(task.due_date) : new Date(task.due_date),
+                                            created_at: task.created_at ? (typeof task.created_at === 'string' ? parseISO(task.created_at) : new Date(task.created_at)) : undefined,
+                                        }));
+                                        const refreshDate = parseISO(dateStr);
+                                        updateTasksCache(
+                                            userId,
+                                            { [dateStr]: updatedTasks },
+                                            format(subMonths(refreshDate, 1), 'yyyy-MM-dd'),
+                                            format(addMonths(refreshDate, 2), 'yyyy-MM-dd')
+                                        );
+                                    }
                                 }
                             }
                         } catch (cacheError) {
-                            // キャッシュ更新のエラーは無視（次回アクセス時に再取得される）
                             console.warn('Failed to update cache after save:', cacheError);
                         }
                         
-                        // 繰り返しタスクの場合は、影響範囲が広いため全体をクリア
-                        if (recurrenceType) {
+                        if (recurrenceType && updateScope === 'all_future') {
                             clearClientTasksCache(userId);
                         }
                     }
@@ -950,6 +981,67 @@ function TaskEditPageContent() {
                     </div>
                 </div>
             </div>
+
+            {/* 保存スコープ選択ダイアログ（繰り返し予定の編集時） */}
+            {showSaveScopeDialog && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-hidden p-4">
+                    <div className="bg-base-100 rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+                        <h2 className="text-xl font-bold mb-4">変更の適用範囲</h2>
+                        <p className="mb-6">この予定は繰り返し設定が有効です。変更をどこに適用しますか？</p>
+
+                        <div className="space-y-3 mb-6">
+                            <label className="flex items-center gap-3 cursor-pointer">
+                                <input
+                                    type="radio"
+                                    name="saveScope"
+                                    value="this_only"
+                                    defaultChecked
+                                    className="radio radio-primary"
+                                />
+                                <span>この予定のみ変更</span>
+                            </label>
+                            <label className="flex items-center gap-3 cursor-pointer">
+                                <input
+                                    type="radio"
+                                    name="saveScope"
+                                    value="all_future"
+                                    className="radio radio-primary"
+                                />
+                                <span>これ以降のすべての繰り返し予定も変更</span>
+                            </label>
+                        </div>
+
+                        <div className="flex justify-end gap-3">
+                            <button
+                                onClick={() => setShowSaveScopeDialog(false)}
+                                className="btn btn-ghost"
+                                disabled={saving}
+                            >
+                                キャンセル
+                            </button>
+                            <button
+                                onClick={() => {
+                                    const selected = document.querySelector('input[name="saveScope"]:checked') as HTMLInputElement;
+                                    if (selected) {
+                                        performSave(selected.value as 'this_only' | 'all_future');
+                                    }
+                                }}
+                                className="btn btn-primary"
+                                disabled={saving}
+                            >
+                                {saving ? (
+                                    <>
+                                        <span className="loading loading-spinner loading-sm"></span>
+                                        保存中...
+                                    </>
+                                ) : (
+                                    '保存'
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* 削除確認ダイアログ */}
             {showDeleteDialog && (

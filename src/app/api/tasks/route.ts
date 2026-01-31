@@ -184,6 +184,8 @@ export async function PUT(request: NextRequest) {
             customDays,
             customUnit,
             selectedWeekdays,
+            updateScope, // 'this_only' | 'all_future' - 繰り返し予定の編集時
+            targetDate,  // 編集対象の発生日 (yyyy-MM-dd) - updateScope: 'this_only' のときに必要
         } = body;
 
         if (!taskId || !title || !dueDate) {
@@ -193,8 +195,30 @@ export async function PUT(request: NextRequest) {
             );
         }
 
-        // タスクを更新
-        // notification_timeは文字列型（HH:mm形式）で保存
+        // 繰り返し予定の「この予定のみ変更」の場合
+        if (updateScope === 'this_only' && targetDate) {
+            // 1. 元の繰り返しタスクに除外日を追加
+            await sql`
+                DELETE FROM task_exclusions 
+                WHERE task_id = ${taskId} AND excluded_date = ${targetDate} AND exclusion_type = 'single'
+            `;
+            await sql`
+                INSERT INTO task_exclusions (task_id, excluded_date, exclusion_type)
+                VALUES (${taskId}, ${targetDate}, 'single')
+                ON CONFLICT (task_id, excluded_date, exclusion_type) DO NOTHING
+            `;
+
+            // 2. 変更内容で新しい単発タスクを作成
+            await sql`
+                INSERT INTO tasks (user_id, title, due_date, notification_enabled, notification_time)
+                VALUES (${user.id}, ${title}, ${dueDate}, ${notificationEnabled}, ${notificationTime || null})
+            `;
+
+            clearTasksCache(user.id);
+            return NextResponse.json({ success: true });
+        }
+
+        // 「これ以降のすべての繰り返し予定も変更」または単発タスクの場合: 従来の更新処理
         const updateResult = await sql`
         UPDATE tasks
         SET title = ${title},
@@ -205,19 +229,15 @@ export async function PUT(request: NextRequest) {
         RETURNING notification_time
     `;
         
-        // デバッグ: 更新された通知時刻をログ出力
         if (notificationEnabled && notificationTime && updateResult.length > 0) {
             console.log(`[Task Update] Task updated with notification_time: "${notificationTime}" (saved as: "${updateResult[0].notification_time}")`);
         }
 
-        // 繰り返し設定を更新
         if (recurrenceType) {
-            // 既存の繰り返し設定を削除
             await sql`
                 DELETE FROM task_recurrences WHERE task_id = ${taskId}
             `;
             
-            // 新しい繰り返し設定を挿入
             await sql`
                 INSERT INTO task_recurrences (task_id, type, custom_days, custom_unit, weekdays)
                 VALUES (
@@ -229,15 +249,12 @@ export async function PUT(request: NextRequest) {
                 )
             `;
         } else {
-            // 繰り返し設定が選択されていない場合は削除（チェックを外した場合）
             await sql`
                 DELETE FROM task_recurrences WHERE task_id = ${taskId}
             `;
         }
 
-        // キャッシュをクリア
         clearTasksCache(user.id, taskId);
-
         return NextResponse.json({ success: true });
     } catch (error: any) {
         console.error('Error updating task:', error);
