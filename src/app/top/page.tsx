@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Calendar from '@/components/Calendar';
 import TodoList from '@/components/TodoList';
@@ -53,6 +53,18 @@ function TopPageContent() {
     const [loading, setLoading] = useState(true);
     const [isUpdating, setIsUpdating] = useState(false); // バックグラウンド更新中フラグ
 
+    // 今日・明日のユーザー操作後のクールダウン（秒）
+    const USER_ACTION_COOLDOWN_MS = 15000;
+
+    // ユーザー操作時刻（日付ごと）。この時刻からクールダウン中はバックグラウンド更新を適用しない
+    const lastUserActionAtRef = useRef<Map<string, number>>(new Map());
+    // 表示中の日付（fetch完了時に同じ日を表示中か確認する用）
+    const selectedDateRef = useRef<Date>(selectedDate);
+
+    useEffect(() => {
+        selectedDateRef.current = selectedDate;
+    }, [selectedDate]);
+
     useEffect(() => {
         // 認証チェックと初期キャッシュ読み込み
         let isMounted = true;
@@ -73,6 +85,19 @@ function TopPageContent() {
 
                 const uid = user.id;
                 setUserId(uid);
+
+                // タスク編集ページから戻った場合のクールダウンを設定
+                if (typeof window !== 'undefined') {
+                    try {
+                        const lastActionDate = sessionStorage.getItem('lastTaskActionDate');
+                        const lastActionAt = sessionStorage.getItem('lastTaskActionAt');
+                        if (lastActionDate && lastActionAt) {
+                            lastUserActionAtRef.current.set(lastActionDate, parseInt(lastActionAt, 10));
+                            sessionStorage.removeItem('lastTaskActionDate');
+                            sessionStorage.removeItem('lastTaskActionAt');
+                        }
+                    } catch (_) {}
+                }
 
                 // キャッシュから即座に読み込む（TTLチェックなし）
                 const cachedTasks = getCachedTasksForDateWithoutTTL(uid, selectedDate);
@@ -210,6 +235,25 @@ function TopPageContent() {
                 created_at: task.created_at ? (typeof task.created_at === 'string' ? parseISO(task.created_at) : new Date(task.created_at)) : undefined,
             }));
 
+            // 今日・明日でクールダウン中は更新をスキップ（ユーザー操作直後の古いデータで上書きを防ぐ）
+            const today = startOfDay(new Date());
+            const tomorrow = addDays(today, 1);
+            const isTodayOrTomorrow = isSameDay(date, today) || isSameDay(date, tomorrow);
+            if (isTodayOrTomorrow) {
+                const lastActionAt = lastUserActionAtRef.current.get(dateStr);
+                if (lastActionAt && (Date.now() - lastActionAt) < USER_ACTION_COOLDOWN_MS) {
+                    if (!mountedRef || mountedRef.current) setIsUpdating(false);
+                    return;
+                }
+            }
+
+            // 表示日が変わっていたら適用しない（日付切り替え時の誤適用防止）
+            const currentSelected = selectedDateRef.current;
+            if (!currentSelected || format(currentSelected, 'yyyy-MM-dd') !== dateStr) {
+                if (!mountedRef || mountedRef.current) setIsUpdating(false);
+                return;
+            }
+
             // 差分比較
             const mergedTasks = compareAndMergeTasks(currentCachedTasks, latestTasks);
 
@@ -233,7 +277,6 @@ function TopPageContent() {
             }
 
             // 現在日の場合、未完了の過去タスクがある日を取得
-            const today = new Date();
             if (isSameDay(date, today) && (!mountedRef || mountedRef.current)) {
                 if (tasksData.overdueDates) {
                     setOverdueDates(tasksData.overdueDates.map((d: string) => parseISO(d)));
@@ -552,6 +595,13 @@ function TopPageContent() {
         if (!userId) return;
 
         const dateStr = format(selectedDate, 'yyyy-MM-dd');
+
+        // 今日・明日の場合はクールダウンを設定（バックグラウンド更新での上書きを防ぐ）
+        const today = startOfDay(new Date());
+        const tomorrow = addDays(today, 1);
+        if (isSameDay(selectedDate, today) || isSameDay(selectedDate, tomorrow)) {
+            lastUserActionAtRef.current.set(dateStr, Date.now());
+        }
 
         // Optimistic UI: 即座にUIを更新
         const previousTasks = [...tasks];
