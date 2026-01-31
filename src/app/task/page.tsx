@@ -23,7 +23,7 @@ function TaskEditPageContent() {
     const [title, setTitle] = useState('');
     const [timeSuggestion, setTimeSuggestion] = useState<{ pattern: string; converted: string; index: number } | null>(null);
     const [dismissedPatterns, setDismissedPatterns] = useState<Set<string>>(new Set()); // 無効化されたパターン（位置:パターン）
-    const titleInputRef = useRef<HTMLInputElement>(null);
+    const titleInputRef = useRef<HTMLTextAreaElement>(null);
     const [dueDate, setDueDate] = useState(initialDate);
     const [notificationEnabled, setNotificationEnabled] = useState(false);
     const [notificationTime, setNotificationTime] = useState('');
@@ -553,7 +553,7 @@ function TaskEditPageContent() {
         return null;
     };
 
-    const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleTitleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         const newTitle = e.target.value;
         const previousTitle = title;
         setTitle(newTitle);
@@ -621,12 +621,19 @@ function TaskEditPageContent() {
         }
     };
 
-    const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        // スペースやエンターを押したら変換候補を無効化
+    const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        // 変換候補表示中にスペースまたはエンターを押したら候補を無効化（エンターの場合は改行を防ぐ）
         if ((e.key === ' ' || e.key === 'Enter') && timeSuggestion) {
+            e.preventDefault();
             const patternKey = `${timeSuggestion.index}:${timeSuggestion.pattern}`;
             setDismissedPatterns(prev => new Set(prev).add(patternKey));
             setTimeSuggestion(null);
+            if (e.key === 'Enter') {
+                // エンターの場合は改行を手動で挿入
+                const before = title.substring(0, timeSuggestion.index + timeSuggestion.pattern.length);
+                const after = title.substring(timeSuggestion.index + timeSuggestion.pattern.length);
+                setTitle(before + '\n' + after);
+            }
         }
     };
 
@@ -686,18 +693,18 @@ function TaskEditPageContent() {
                         <span className="label-text font-semibold">タイトル</span>
                     </label>
                     <div className="relative">
-                        <input
+                        <textarea
                             ref={titleInputRef}
-                            type="text"
-                            placeholder="タスクを入力"
-                            className="input input-bordered w-full"
+                            placeholder="タスクを入力（Enterで改行）"
+                            className="textarea textarea-bordered w-full min-h-24 resize-y"
+                            rows={3}
                             value={title}
                             onChange={handleTitleChange}
                             onKeyDown={handleTitleKeyDown}
                             autoFocus={!loading && !!userId}
                         />
                         {timeSuggestion && (
-                            <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                            <div className="absolute right-2 top-2">
                                 <button
                                     type="button"
                                     onClick={handleTimeSuggestionClick}

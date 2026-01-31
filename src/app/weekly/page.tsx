@@ -242,7 +242,7 @@ function WeeklyPageContent() {
                                                                 {task.notification_time}
                                                             </span>
                                                         )}
-                                                        {task.title}
+                                                        <span className="whitespace-pre-line">{task.title}</span>
                                                     </a>
                                                 </div>
                                             ))}

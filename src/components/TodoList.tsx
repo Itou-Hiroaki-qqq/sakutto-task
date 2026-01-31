@@ -113,7 +113,7 @@ function TodoItem({
                             {task.notification_time}
                         </span>
                     )}
-                    <span>{task.title}</span>
+                    <span className="whitespace-pre-line">{task.title}</span>
                 </div>
             </Link>
         </div>
