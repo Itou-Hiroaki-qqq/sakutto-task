@@ -315,14 +315,6 @@ function TaskEditPageContent() {
                 // 元のページに戻る（日付パラメータを保持）
                 const returnDate = searchParams.get('date');
                 const returnUrl = searchParams.get('returnUrl') || '/top';
-                // トップに戻る場合、今日・明日のクールダウンを設定（バックグラウンド更新での上書き防止）
-                if (returnUrl === '/top' || returnUrl.startsWith('/top')) {
-                    try {
-                        const dateToSet = returnDate || format(dueDate, 'yyyy-MM-dd');
-                        sessionStorage.setItem('lastTaskActionDate', dateToSet);
-                        sessionStorage.setItem('lastTaskActionAt', Date.now().toString());
-                    } catch (_) {}
-                }
                 if (returnDate) {
                     router.push(`${returnUrl}?date=${returnDate}`);
                 } else {
@@ -476,14 +468,6 @@ function TaskEditPageContent() {
                 // 元のページに戻る（日付パラメータを保持）
                 const returnDate = searchParams.get('date');
                 const returnUrl = searchParams.get('returnUrl') || '/top';
-                // トップに戻る場合、今日・明日のクールダウンを設定（バックグラウンド更新での上書き防止）
-                if (returnUrl === '/top' || returnUrl.startsWith('/top')) {
-                    try {
-                        const dateToSet = returnDate || format(dueDate, 'yyyy-MM-dd');
-                        sessionStorage.setItem('lastTaskActionDate', dateToSet);
-                        sessionStorage.setItem('lastTaskActionAt', Date.now().toString());
-                    } catch (_) {}
-                }
                 if (returnDate) {
                     router.push(`${returnUrl}?date=${returnDate}`);
                 } else {
