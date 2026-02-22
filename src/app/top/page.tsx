@@ -140,25 +140,26 @@ function TopPageContent() {
         return () => { mountedRef.current = false; };
     }, [userId, selectedDate]);
 
-    // URLパラメータと日付の同期
+    // URLパラメータと日付の同期（URL に date があるときだけ URL → state。date がないときは上書きしない）
     useEffect(() => {
         const dateParam = searchParams.get('date');
-        if (dateParam) {
-            try {
-                const parsed = parseISO(dateParam);
+        if (!dateParam) return; // URL に日付がなければ state を触らない（カレンダーで選んだ日を維持）
+
+        const today = startOfDay(new Date());
+        try {
+            const parsed = parseISO(dateParam);
+            const newStr = format(parsed, 'yyyy-MM-dd');
+            if (format(selectedDate, 'yyyy-MM-dd') !== newStr) {
                 setSelectedDate(parsed);
                 setDisplayMonth(parsed);
-            } catch {
-                const today = new Date();
+            }
+        } catch {
+            if (format(selectedDate, 'yyyy-MM-dd') !== format(today, 'yyyy-MM-dd')) {
                 setSelectedDate(today);
                 setDisplayMonth(today);
             }
-        } else {
-            const today = new Date();
-            setSelectedDate(today);
-            setDisplayMonth(today);
         }
-    }, [searchParams]);
+    }, [searchParams, selectedDate]);
 
     // プリフェッチ: API取得 → localStorage に保存のみ（setState しない）
     useEffect(() => {
