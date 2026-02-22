@@ -7,7 +7,8 @@ import { format, parseISO, subMonths, addMonths } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import DatePicker from '@/components/DatePicker';
 import { RecurrenceType } from '@/types/database';
-import { clearTasksCache as clearClientTasksCache, isWithinCurrentMonthRange, updateTasksCache } from '@/lib/tasksCache';
+import { clearTasksCache as clearClientTasksCache, getCachedTasksForDateWithoutTTL, isWithinCurrentMonthRange, updateTasksCache } from '@/lib/tasksCache';
+import { DisplayTask } from '@/types/database';
 
 function TaskEditPageContent() {
     const router = useRouter();
@@ -229,108 +230,127 @@ function TaskEditPageContent() {
             }
         }
 
-        setSaving(true);
-        try {
-            let customDaysToSave = null;
-            let customUnitToSave = null;
-            if (recurrenceType === 'custom' && customDays) {
-                customDaysToSave = customDays;
-                customUnitToSave = customUnit;
-                // 日単位の場合は単位を保存しない（後方互換性）
-                if (customUnit === 'days') {
-                    customUnitToSave = null;
-                }
-            }
+        let customDaysToSave: number | null = null;
+        let customUnitToSave: 'days' | 'weeks' | 'months' | 'months_end' | 'years' | null = null;
+        if (recurrenceType === 'custom' && customDays) {
+            customDaysToSave = customDays;
+            customUnitToSave = customUnit;
+            if (customUnit === 'days') customUnitToSave = null;
+        }
 
-            const payload: Record<string, unknown> = {
-                taskId: taskIdParam,
+        const payload: Record<string, unknown> = {
+            taskId: taskIdParam,
+            title: title.trim(),
+            dueDate: format(dueDate, 'yyyy-MM-dd'),
+            notificationEnabled,
+            notificationTime: notificationEnabled ? notificationTime : null,
+            recurrenceType,
+            customDays: customDaysToSave,
+            customUnit: customUnitToSave,
+            selectedWeekdays: recurrenceType === 'weekdays' ? selectedWeekdays : null,
+        };
+        if (taskIdParam && recurrenceType && updateScope) {
+            payload.updateScope = updateScope;
+            const dateParam = searchParams.get('date');
+            if (dateParam) payload.targetDate = dateParam;
+        }
+
+        const returnDate = searchParams.get('date');
+        const returnUrl = searchParams.get('returnUrl') || '/top';
+        const dateStrForCache = updateScope === 'this_only' && returnDate ? returnDate : format(dueDate, 'yyyy-MM-dd');
+        const occurrenceDate = parseISO(dateStrForCache);
+
+        // 楽観的キャッシュ更新（React State の唯一の真実はトップの setState；キャッシュは初回表示用なので即反映させる）
+        if (userId && updateScope !== 'all_future' && isWithinCurrentMonthRange(occurrenceDate)) {
+            const tempId = taskIdParam ?? `temp-${Date.now()}`;
+            const optimisticTask: DisplayTask = {
+                id: tempId,
+                task_id: tempId,
                 title: title.trim(),
-                dueDate: format(dueDate, 'yyyy-MM-dd'),
-                notificationEnabled,
-                notificationTime: notificationEnabled ? notificationTime : null,
-                recurrenceType,
-                customDays: customDaysToSave,
-                customUnit: customUnitToSave,
-                selectedWeekdays: recurrenceType === 'weekdays' ? selectedWeekdays : null,
+                date: occurrenceDate,
+                due_date: dueDate,
+                notification_time: notificationEnabled ? notificationTime : undefined,
+                completed: false,
+                is_recurring: recurrenceType !== null,
+                created_at: new Date(),
             };
-            // 繰り返し予定の編集時は範囲を指定
-            if (taskIdParam && recurrenceType && updateScope) {
-                payload.updateScope = updateScope;
-                const dateParam = searchParams.get('date');
-                if (dateParam) payload.targetDate = dateParam;
-            }
+            const existing = getCachedTasksForDateWithoutTTL(userId, occurrenceDate) ?? [];
+            const newList = taskIdParam
+                ? existing.map((t) => (t.task_id === taskIdParam ? optimisticTask : t))
+                : [...existing, optimisticTask];
+            updateTasksCache(
+                userId,
+                { [dateStrForCache]: newList },
+                format(subMonths(occurrenceDate, 1), 'yyyy-MM-dd'),
+                format(addMonths(occurrenceDate, 2), 'yyyy-MM-dd')
+            );
+        }
+        if (userId && updateScope === 'all_future') {
+            clearClientTasksCache(userId);
+        }
 
-            const response = await fetch('/api/tasks', {
-                method: taskIdParam ? 'PUT' : 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
+        // UI は即切り替え（戻る）
+        if (returnDate) {
+            router.push(`${returnUrl}?date=${returnDate}`);
+        } else {
+            router.push(returnUrl);
+        }
 
-            if (response.ok) {
-                const responseData = await response.json();
-                
-                // Optimistic UI: 保存成功後、即座にキャッシュを更新（現在日±1ヶ月の範囲の場合）
-                if (userId) {
-                    const taskDate = parseISO(format(dueDate, 'yyyy-MM-dd'));
-                    const dateParam = searchParams.get('date');
-                    const datesToRefresh = new Set<string>([format(dueDate, 'yyyy-MM-dd')]);
-                    if (updateScope === 'this_only' && dateParam) {
-                        datesToRefresh.add(dateParam); // 除外した日付のキャッシュも更新
-                    }
+        // 保存はバックグラウンドで実行
+        (async () => {
+            try {
+                const response = await fetch('/api/tasks', {
+                    method: taskIdParam ? 'PUT' : 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
 
-                    if (isWithinCurrentMonthRange(taskDate) || (dateParam && isWithinCurrentMonthRange(parseISO(dateParam)))) {
+                if (response.ok) {
+                    if (userId && (updateScope !== 'all_future')) {
+                        const datesToRefresh = new Set<string>([dateStrForCache]);
+                        if (updateScope === 'this_only' && returnDate) datesToRefresh.add(returnDate);
                         try {
-                            for (const dateStr of datesToRefresh) {
-                                const updatedTasksResponse = await fetch(`/api/tasks?date=${dateStr}`);
-                                if (updatedTasksResponse.ok) {
-                                    const updatedData = await updatedTasksResponse.json();
-                                    if (updatedData.tasks) {
-                                        const updatedTasksRaw: any[] = updatedData.tasks;
-                                        const updatedTasks = updatedTasksRaw.map((task: any) => ({
-                                            ...task,
-                                            date: typeof task.date === 'string' ? parseISO(task.date) : new Date(task.date),
-                                            due_date: typeof task.due_date === 'string' ? parseISO(task.due_date) : new Date(task.due_date),
-                                            created_at: task.created_at ? (typeof task.created_at === 'string' ? parseISO(task.created_at) : new Date(task.created_at)) : undefined,
-                                        }));
-                                        const refreshDate = parseISO(dateStr);
-                                        updateTasksCache(
-                                            userId,
-                                            { [dateStr]: updatedTasks },
-                                            format(subMonths(refreshDate, 1), 'yyyy-MM-dd'),
-                                            format(addMonths(refreshDate, 2), 'yyyy-MM-dd')
-                                        );
-                                    }
+                            for (const ds of datesToRefresh) {
+                                const res = await fetch(`/api/tasks?date=${ds}`);
+                                if (res.ok && isWithinCurrentMonthRange(parseISO(ds))) {
+                                    const data = await res.json();
+                                    const tasksRaw = (data.tasks || []).map((t: any) => ({
+                                        ...t,
+                                        date: typeof t.date === 'string' ? parseISO(t.date) : new Date(t.date),
+                                        due_date: typeof t.due_date === 'string' ? parseISO(t.due_date) : new Date(t.due_date),
+                                        created_at: t.created_at ? (typeof t.created_at === 'string' ? parseISO(t.created_at) : new Date(t.created_at)) : undefined,
+                                    }));
+                                    updateTasksCache(
+                                        userId,
+                                        { [ds]: tasksRaw },
+                                        format(subMonths(parseISO(ds), 1), 'yyyy-MM-dd'),
+                                        format(addMonths(parseISO(ds), 2), 'yyyy-MM-dd')
+                                    );
                                 }
                             }
-                        } catch (cacheError) {
-                            console.warn('Failed to update cache after save:', cacheError);
-                        }
-                        
-                        if (recurrenceType && updateScope === 'all_future') {
-                            clearClientTasksCache(userId);
-                        }
+                        } catch (_) {}
                     }
-                }
-
-                // 元のページに戻る（日付パラメータを保持）
-                const returnDate = searchParams.get('date');
-                const returnUrl = searchParams.get('returnUrl') || '/top';
-                if (returnDate) {
-                    router.push(`${returnUrl}?date=${returnDate}`);
+                    if (userId && recurrenceType && updateScope === 'all_future') {
+                        clearClientTasksCache(userId);
+                    }
                 } else {
-                    router.push(returnUrl);
+                    const err = await response.json().catch(() => ({}));
+                    if (userId && isWithinCurrentMonthRange(occurrenceDate)) {
+                        clearClientTasksCache(userId, dateStrForCache);
+                    }
+                    try {
+                        sessionStorage.setItem('task_save_error', err?.error ?? '保存に失敗しました');
+                    } catch (_) {}
                 }
-            } else {
-                const error = await response.json();
-                console.error('Save error:', error);
-                alert(error.error || '保存に失敗しました。データベーススキーマが最新か確認してください。');
+            } catch (_) {
+                if (userId && isWithinCurrentMonthRange(occurrenceDate)) {
+                    clearClientTasksCache(userId, dateStrForCache);
+                }
+                try {
+                    sessionStorage.setItem('task_save_error', '保存に失敗しました');
+                } catch (_) {}
             }
-        } catch (error) {
-            console.error('Failed to save task:', error);
-            alert('保存に失敗しました');
-        } finally {
-            setSaving(false);
-        }
+        })();
     };
 
     // 時刻を5分刻みに丸める関数

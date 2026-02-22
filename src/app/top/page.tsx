@@ -79,6 +79,18 @@ function TopPageContent() {
         return () => { mounted = false; };
     }, [router]);
 
+    // タスク編集のバックグラウンド保存失敗時（編集画面から戻ったあとエラーが判明した場合）
+    useEffect(() => {
+        if (!userId) return;
+        try {
+            const msg = sessionStorage.getItem('task_save_error');
+            if (msg) {
+                sessionStorage.removeItem('task_save_error');
+                alert(msg);
+            }
+        } catch (_) {}
+    }, [userId]);
+
     // 日付切り替え・初回ロード: 1) localStorage即表示 2) API fetch → setState(latest)
     useEffect(() => {
         if (!userId) return;
