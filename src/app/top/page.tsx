@@ -152,26 +152,28 @@ function TopPageContent() {
         return () => { mountedRef.current = false; };
     }, [userId, selectedDate]);
 
-    // URLパラメータと日付の同期（URL に date があるときだけ URL → state。date がないときは上書きしない）
+    // URLパラメータと日付の同期（URL が変わったときだけ URL → state。カレンダークリックでは URL を更新しないため selectedDate は依存に含めない）
     useEffect(() => {
         const dateParam = searchParams.get('date');
-        if (!dateParam) return; // URL に日付がなければ state を触らない（カレンダーで選んだ日を維持）
+        if (!dateParam) return;
 
         const today = startOfDay(new Date());
         try {
             const parsed = parseISO(dateParam);
             const newStr = format(parsed, 'yyyy-MM-dd');
-            if (format(selectedDate, 'yyyy-MM-dd') !== newStr) {
-                setSelectedDate(parsed);
-                setDisplayMonth(parsed);
-            }
+            setSelectedDate((prev) => {
+                if (format(prev, 'yyyy-MM-dd') === newStr) return prev;
+                return parsed;
+            });
+            setDisplayMonth(parsed);
         } catch {
-            if (format(selectedDate, 'yyyy-MM-dd') !== format(today, 'yyyy-MM-dd')) {
-                setSelectedDate(today);
-                setDisplayMonth(today);
-            }
+            setSelectedDate((prev) => {
+                if (format(prev, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')) return prev;
+                return today;
+            });
+            setDisplayMonth(today);
         }
-    }, [searchParams, selectedDate]);
+    }, [searchParams]);
 
     // プリフェッチ: API取得 → localStorage に保存のみ（setState しない）
     useEffect(() => {
