@@ -7,7 +7,7 @@ import { format, parseISO, subMonths, addMonths } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import DatePicker from '@/components/DatePicker';
 import { RecurrenceType } from '@/types/database';
-import { clearTasksCache as clearClientTasksCache, getCachedTasksForDateWithoutTTL, isWithinCurrentMonthRange, updateTasksCache } from '@/lib/tasksCache';
+import { clearTasksCache as clearClientTasksCache, getCachedTasksForDateWithoutTTL, isWithinCurrentMonthRange, setTasksOverride, updateTasksCache } from '@/lib/tasksCache';
 import { DisplayTask } from '@/types/database';
 
 function TaskEditPageContent() {
@@ -40,40 +40,114 @@ function TaskEditPageContent() {
     const [deleting, setDeleting] = useState(false);
     const [showSaveScopeDialog, setShowSaveScopeDialog] = useState(false);
 
+    // 認証とタスク取得を並列実行して遷移を速くする
     useEffect(() => {
-        const checkAuth = async () => {
-            const supabase = createClient();
-            const {
-                data: { user },
-            } = await supabase.auth.getUser();
+        const dateParam = searchParams.get('date');
+        const supabase = createClient();
 
+        const run = async () => {
+            const [authResult, taskResponse] = await Promise.all([
+                supabase.auth.getUser(),
+                taskIdParam ? fetch(`/api/tasks/${taskIdParam}`) : Promise.resolve(null),
+            ]);
+
+            const { data: { user } } = authResult;
             if (!user) {
                 router.push('/login');
                 return;
             }
-
             setUserId(user.id);
 
-            // 既存タスクを編集する場合
-            if (taskIdParam) {
-                // URLパラメータの日付がある場合は、読み込み後に期日を更新する可能性がある
-                const dateParam = searchParams.get('date');
-                loadTask(taskIdParam, user.id, dateParam);
-            } else {
-                // 新規タスク作成時は、URLパラメータの日付を使用
+            if (!taskIdParam) {
                 const newDateParam = searchParams.get('date');
                 if (newDateParam) {
                     try {
-                        const parsedDate = parseISO(newDateParam);
-                        setDueDate(parsedDate);
-                    } catch (e) {
+                        setDueDate(parseISO(newDateParam));
+                    } catch {
                         // パースエラーは無視
                     }
                 }
+                setLoading(false);
+                return;
+            }
+
+            if (!taskResponse) {
+                setLoading(false);
+                return;
+            }
+
+            try {
+                if (taskResponse.ok) {
+                    const data = await taskResponse.json();
+                    if (!data.task) {
+                        alert('タスクデータが見つかりませんでした');
+                        router.back();
+                        return;
+                    }
+                    setTitle(data.task.title || '');
+                    const taskDueDate = data.task.due_date ? new Date(data.task.due_date) : initialDate;
+                    if (data.recurrence && dateParam) {
+                        try {
+                            setDueDate(parseISO(dateParam));
+                        } catch {
+                            setDueDate(taskDueDate);
+                        }
+                    } else {
+                        setDueDate(taskDueDate);
+                    }
+                    setNotificationEnabled(data.task.notification_enabled || false);
+                    setNotificationTime(data.task.notification_time || '');
+                    if (data.recurrence) {
+                        setRecurrenceType(data.recurrence.type);
+                        if (data.recurrence.type === 'custom' && data.recurrence.custom_days) {
+                            if (data.recurrence.custom_unit) {
+                                setCustomUnit(data.recurrence.custom_unit as 'days' | 'weeks' | 'months' | 'months_end' | 'years');
+                                setCustomDays(data.recurrence.custom_days);
+                            } else {
+                                const days = data.recurrence.custom_days;
+                                if (days % 365 === 0) {
+                                    setCustomUnit('years');
+                                    setCustomDays(days / 365);
+                                } else if (days % 30 === 0) {
+                                    setCustomUnit('months');
+                                    setCustomDays(days / 30);
+                                } else if (days % 7 === 0) {
+                                    setCustomUnit('weeks');
+                                    setCustomDays(days / 7);
+                                } else {
+                                    setCustomUnit('days');
+                                    setCustomDays(days);
+                                }
+                            }
+                        } else {
+                            setCustomDays(data.recurrence.custom_days || null);
+                        }
+                        setSelectedWeekdays(data.recurrence.weekdays || []);
+                    } else {
+                        setRecurrenceType(null);
+                        setCustomDays(null);
+                        setCustomUnit('days');
+                        setSelectedWeekdays([]);
+                    }
+                } else {
+                    const errorData = await taskResponse.json();
+                    if (taskResponse.status === 404) {
+                        alert('タスクが見つかりませんでした。既に削除されている可能性があります。');
+                        router.back();
+                    } else {
+                        alert(`タスクの読み込みに失敗しました: ${errorData.error || 'Unknown error'}`);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to load task:', e);
+                alert('タスクの読み込み中にエラーが発生しました');
+            } finally {
+                setLoading(false);
             }
         };
 
-        checkAuth();
+        if (taskIdParam) setLoading(true);
+        run();
     }, [router, taskIdParam, searchParams]);
 
     // ローディングが完了したらタイトル入力欄にフォーカス
@@ -88,98 +162,6 @@ function TaskEditPageContent() {
             return () => clearTimeout(timer);
         }
     }, [loading, userId]);
-
-    const loadTask = async (taskId: string, userId: string, dateParam?: string | null) => {
-        setLoading(true);
-        try {
-            console.log('Loading task:', taskId);
-            const response = await fetch(`/api/tasks/${taskId}`);
-            console.log('Task response status:', response.status);
-
-            if (response.ok) {
-                const data = await response.json();
-                console.log('Task data loaded:', data);
-
-                if (!data.task) {
-                    console.error('Task data not found in response:', data);
-                    alert('タスクデータが見つかりませんでした');
-                    router.back();
-                    return;
-                }
-                setTitle(data.task.title || '');
-
-                // 期日の設定: 繰り返し予定でURLのdateパラメータがある場合は、その日付を表示（開いた発生日を反映）
-                const taskDueDate = data.task.due_date ? new Date(data.task.due_date) : initialDate;
-                if (data.recurrence && dateParam) {
-                    try {
-                        const parsedDate = parseISO(dateParam);
-                        setDueDate(parsedDate);
-                    } catch {
-                        setDueDate(taskDueDate);
-                    }
-                } else {
-                    setDueDate(taskDueDate);
-                }
-
-                setNotificationEnabled(data.task.notification_enabled || false);
-                setNotificationTime(data.task.notification_time || '');
-
-                if (data.recurrence) {
-                    setRecurrenceType(data.recurrence.type);
-
-                    // カスタム期間の場合、単位情報から復元
-                    if (data.recurrence.type === 'custom' && data.recurrence.custom_days) {
-                        if (data.recurrence.custom_unit) {
-                            // 単位情報がある場合はそれを使用
-                            setCustomUnit(data.recurrence.custom_unit as 'days' | 'weeks' | 'months' | 'months_end' | 'years');
-                            setCustomDays(data.recurrence.custom_days);
-                        } else {
-                            // 単位情報がない場合は推測（後方互換性）
-                            const days = data.recurrence.custom_days;
-                            if (days % 365 === 0) {
-                                setCustomUnit('years');
-                                setCustomDays(days / 365);
-                            } else if (days % 30 === 0) {
-                                setCustomUnit('months');
-                                setCustomDays(days / 30);
-                            } else if (days % 7 === 0) {
-                                setCustomUnit('weeks');
-                                setCustomDays(days / 7);
-                            } else {
-                                setCustomUnit('days');
-                                setCustomDays(days);
-                            }
-                        }
-                    } else {
-                        // カスタム期間以外の場合
-                        setCustomDays(data.recurrence.custom_days || null);
-                    }
-
-                    setSelectedWeekdays(data.recurrence.weekdays || []);
-                } else {
-                    // 繰り返し設定がない場合、すべてリセット
-                    setRecurrenceType(null);
-                    setCustomDays(null);
-                    setCustomUnit('days');
-                    setSelectedWeekdays([]);
-                }
-            } else {
-                const errorData = await response.json();
-                console.error('Failed to load task:', response.status, errorData);
-                if (response.status === 404) {
-                    alert('タスクが見つかりませんでした。既に削除されている可能性があります。');
-                    router.back();
-                } else {
-                    alert(`タスクの読み込みに失敗しました: ${errorData.error || 'Unknown error'}`);
-                }
-            }
-        } catch (error) {
-            console.error('Failed to load task:', error);
-            alert('タスクの読み込み中にエラーが発生しました');
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const handleSave = () => {
         if (!title.trim() || !userId) {
@@ -284,6 +266,7 @@ function TaskEditPageContent() {
                 format(subMonths(occurrenceDate, 1), 'yyyy-MM-dd'),
                 format(addMonths(occurrenceDate, 2), 'yyyy-MM-dd')
             );
+            setTasksOverride(userId, dateStrForCache, newList);
         }
         if (userId && updateScope === 'all_future') {
             clearClientTasksCache(userId);
@@ -507,7 +490,8 @@ function TaskEditPageContent() {
         }
     };
 
-    if (!userId || loading) {
+    // 認証前のみ全画面スピナー。認証後はフォームの骨組みを即表示し、編集時は中身を読み込み中表示
+    if (!userId) {
         return (
             <div className="min-h-screen flex items-center justify-center">
                 <span className="loading loading-spinner loading-lg"></span>
@@ -682,7 +666,7 @@ function TaskEditPageContent() {
                             <button
                                 onClick={() => handleDelete()}
                                 className="btn btn-ghost btn-circle"
-                                disabled={deleting}
+                                disabled={deleting || loading}
                             >
                                 {deleting ? (
                                     <span className="loading loading-spinner loading-sm"></span>
@@ -694,7 +678,7 @@ function TaskEditPageContent() {
                         <button
                             onClick={handleSave}
                             className="btn btn-ghost btn-circle"
-                            disabled={saving}
+                            disabled={saving || loading}
                         >
                             {saving ? (
                                 <span className="loading loading-spinner loading-sm"></span>
@@ -707,6 +691,12 @@ function TaskEditPageContent() {
             </header>
 
             <div className="container mx-auto px-4 py-6 max-w-2xl">
+                {loading && (
+                    <div className="flex items-center gap-2 text-base-content/60 mb-4">
+                        <span className="loading loading-spinner loading-sm"></span>
+                        <span>読み込み中...</span>
+                    </div>
+                )}
                 {/* タイトル入力 */}
                 <div className="form-control mb-6">
                     <label className="label">
@@ -715,7 +705,8 @@ function TaskEditPageContent() {
                     <div className="relative">
                         <textarea
                             ref={titleInputRef}
-                            placeholder="タスクを入力（Enterで改行）"
+                            placeholder={loading ? '読み込み中...' : 'タスクを入力（Enterで改行）'}
+                            disabled={loading}
                             className="textarea textarea-bordered w-full min-h-24 resize-y"
                             rows={3}
                             value={title}
@@ -746,8 +737,10 @@ function TaskEditPageContent() {
                         <span className="label-text font-semibold">期日</span>
                     </label>
                     <button
+                        type="button"
                         onClick={() => setShowDatePicker(true)}
                         className="btn btn-outline w-full justify-start"
+                        disabled={loading}
                     >
                         {format(dueDate, 'yyyy年M月d日(E)', { locale: ja })}
                     </button>

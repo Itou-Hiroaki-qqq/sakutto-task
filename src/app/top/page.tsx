@@ -10,6 +10,8 @@ import { DisplayTask } from '@/types/database';
 import { format, parseISO, isSameDay, addMonths, subMonths, addDays, subDays, startOfDay, differenceInDays } from 'date-fns';
 import {
     getCachedTasksForDateWithoutTTL,
+    getTasksOverride,
+    clearTasksOverride,
     updateTasksCache,
     isWithinCurrentMonthRange,
 } from '@/lib/tasksCache';
@@ -99,12 +101,21 @@ function TopPageContent() {
         const mountedRef = { current: true };
 
         const load = async () => {
-            const cached = getCachedTasksForDateWithoutTTL(userId, selectedDate);
-            if (cached !== null && cached.length >= 0 && isWithinCurrentMonthRange(selectedDate)) {
-                setTasks(cached);
+            const override = getTasksOverride(userId, dateStr);
+            let usedOverrideInThisLoad = false;
+            if (override) {
+                setTasks(override);
                 setLoading(false);
+                clearTasksOverride(userId, dateStr);
+                usedOverrideInThisLoad = true;
             } else {
-                setLoading(true);
+                const cached = getCachedTasksForDateWithoutTTL(userId, selectedDate);
+                if (cached !== null && cached.length >= 0 && isWithinCurrentMonthRange(selectedDate)) {
+                    setTasks(cached);
+                    setLoading(false);
+                } else {
+                    setLoading(true);
+                }
             }
 
             try {
@@ -120,14 +131,16 @@ function TopPageContent() {
                     const latest = parseTasksFromAPI(data.tasks || []);
 
                     if (format(selectedDateRef.current, 'yyyy-MM-dd') === dateStr) {
-                        setTasks(latest);
-                        if (isWithinCurrentMonthRange(selectedDate)) {
-                            updateTasksCache(
-                                userId,
-                                { [dateStr]: latest },
-                                format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
-                                format(addMonths(selectedDate, 2), 'yyyy-MM-dd')
-                            );
+                        if (!usedOverrideInThisLoad) {
+                            setTasks(latest);
+                            if (isWithinCurrentMonthRange(selectedDate)) {
+                                updateTasksCache(
+                                    userId,
+                                    { [dateStr]: latest },
+                                    format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
+                                    format(addMonths(selectedDate, 2), 'yyyy-MM-dd')
+                                );
+                            }
                         }
                     }
 

@@ -236,3 +236,44 @@ export function clearAllTasksCache(): void {
         console.error('Error clearing all tasks cache:', error);
     }
 }
+
+// 保存直後の「表示用上書き」用（sessionStorage）。タスク追加・編集後にトップへ戻ったとき、即反映させる
+const OVERRIDE_KEY_PREFIX = 'tasks_override_';
+
+function getOverrideKey(userId: string, dateStr: string): string {
+    return `${OVERRIDE_KEY_PREFIX}${userId}_${dateStr}`;
+}
+
+export function setTasksOverride(userId: string, dateStr: string, tasks: DisplayTask[]): void {
+    try {
+        const serialized = tasks.map((t) => ({
+            ...t,
+            date: t.date instanceof Date ? t.date.toISOString() : t.date,
+            due_date: t.due_date instanceof Date ? t.due_date.toISOString() : t.due_date,
+            created_at: t.created_at instanceof Date ? t.created_at.toISOString() : t.created_at,
+        }));
+        sessionStorage.setItem(getOverrideKey(userId, dateStr), JSON.stringify(serialized));
+    } catch (_) {}
+}
+
+export function getTasksOverride(userId: string, dateStr: string): DisplayTask[] | null {
+    try {
+        const raw = sessionStorage.getItem(getOverrideKey(userId, dateStr));
+        if (!raw) return null;
+        const arr = JSON.parse(raw) as any[];
+        return arr.map((t) => ({
+            ...t,
+            date: typeof t.date === 'string' ? parseISO(t.date) : t.date,
+            due_date: typeof t.due_date === 'string' ? parseISO(t.due_date) : t.due_date,
+            created_at: t.created_at ? (typeof t.created_at === 'string' ? parseISO(t.created_at) : t.created_at) : undefined,
+        }));
+    } catch (_) {
+        return null;
+    }
+}
+
+export function clearTasksOverride(userId: string, dateStr: string): void {
+    try {
+        sessionStorage.removeItem(getOverrideKey(userId, dateStr));
+    } catch (_) {}
+}
