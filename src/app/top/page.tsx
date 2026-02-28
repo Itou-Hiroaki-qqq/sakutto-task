@@ -64,6 +64,9 @@ function TopPageContent() {
         selectedDateRef.current = selectedDate;
     }, [selectedDate]);
 
+    // 完了トグル送信中：後から返る fetch で Optimistic 表示を上書きしないように保持
+    const completionPendingRef = useRef<{ taskId: string; completed: boolean } | null>(null);
+
     // 認証
     useEffect(() => {
         let mounted = true;
@@ -132,11 +135,15 @@ function TopPageContent() {
 
                     if (format(selectedDateRef.current, 'yyyy-MM-dd') === dateStr) {
                         if (!usedOverrideInThisLoad) {
-                            setTasks(latest);
+                            const pending = completionPendingRef.current;
+                            const toSet = pending
+                                ? latest.map((t) => (t.task_id === pending.taskId ? { ...t, completed: pending.completed } : t))
+                                : latest;
+                            setTasks(toSet);
                             if (isWithinCurrentMonthRange(selectedDate)) {
                                 updateTasksCache(
                                     userId,
-                                    { [dateStr]: latest },
+                                    { [dateStr]: toSet },
                                     format(subMonths(selectedDate, 1), 'yyyy-MM-dd'),
                                     format(addMonths(selectedDate, 2), 'yyyy-MM-dd')
                                 );
@@ -268,7 +275,7 @@ function TopPageContent() {
         const dateStr = format(selectedDate, 'yyyy-MM-dd');
         const previousTasks = [...tasks];
 
-        // 1. React State を Optimistic に即更新
+        completionPendingRef.current = { taskId, completed };
         setTasks(prev => prev.map(t => t.task_id === taskId ? { ...t, completed } : t));
 
         try {
@@ -294,7 +301,6 @@ function TopPageContent() {
                 );
             }
         } catch (e) {
-            // 3. API 失敗時のみ再取得して setState
             setTasks(previousTasks);
             try {
                 const res = await fetch(`/api/tasks?date=${dateStr}`);
@@ -304,6 +310,8 @@ function TopPageContent() {
                 }
             } catch (_) {}
             alert(e instanceof Error ? e.message : '完了状態の更新に失敗しました。');
+        } finally {
+            completionPendingRef.current = null;
         }
     };
 
