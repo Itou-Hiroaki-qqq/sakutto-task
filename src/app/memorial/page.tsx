@@ -153,21 +153,20 @@ function MemorialEditPageContent() {
             return;
         }
 
-        // 通知設定が有効な場合、メールアドレスまたはWeb Push設定の確認
+        // 通知設定が有効な場合、メールアドレスの設定確認
         if (notificationEnabled && notificationTime) {
             try {
                 const settingsResponse = await fetch('/api/settings/notifications');
                 if (settingsResponse.ok) {
                     const settingsData = await settingsResponse.json();
                     const hasEmail = settingsData.settings?.email && settingsData.settings?.email_notification_enabled;
-                    const hasWebPush = settingsData.settings?.web_push_enabled;
 
-                    // メール通知もWeb Push通知も有効でない場合、通知設定ページへ遷移
-                    if (!hasEmail && !hasWebPush) {
+                    // メール通知が有効でない場合、通知設定ページへ遷移
+                    if (!hasEmail) {
                         const returnDate = searchParams.get('date');
                         const returnUrl = `/memorial${memorialIdParam ? `?memorialId=${memorialIdParam}` : ''}${returnDate ? `&date=${returnDate}` : ''}`;
                         const confirmed = confirm(
-                            '通知を送信するには、メールアドレスまたはWeb Push通知の設定が必要です。\n通知設定ページに移動しますか？'
+                            '通知を送信するには、メールアドレスの設定が必要です。\n通知設定ページに移動しますか？'
                         );
                         if (confirmed) {
                             router.push(`/settings/notifications?returnUrl=${encodeURIComponent(returnUrl)}`);

@@ -57,6 +57,7 @@ function TopPageContent() {
     const [overdueDates, setOverdueDates] = useState<Date[]>([]);
     const [userId, setUserId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
+    const [errorToast, setErrorToast] = useState<string | null>(null);
 
     // 表示中の日付（fetch完了時に同じ日を表示中か確認する用）
     const selectedDateRef = useRef<Date>(selectedDate);
@@ -91,7 +92,8 @@ function TopPageContent() {
             const msg = sessionStorage.getItem('task_save_error');
             if (msg) {
                 sessionStorage.removeItem('task_save_error');
-                alert(msg);
+                setErrorToast(msg);
+                setTimeout(() => setErrorToast(null), 4000);
             }
         } catch (_) {}
     }, [userId]);
@@ -309,7 +311,9 @@ function TopPageContent() {
                     setTasks(parseTasksFromAPI(data.tasks || []));
                 }
             } catch (_) {}
-            alert(e instanceof Error ? e.message : '完了状態の更新に失敗しました。');
+            const msg = e instanceof Error ? e.message : '完了状態の更新に失敗しました。';
+            setErrorToast(msg);
+            setTimeout(() => setErrorToast(null), 4000);
         } finally {
             completionPendingRef.current = null;
         }
@@ -327,6 +331,13 @@ function TopPageContent() {
 
     return (
         <Layout currentDate={displayMonth} onDateChange={handleMonthChange}>
+            {errorToast && (
+                <div className="toast toast-top toast-center z-50">
+                    <div className="alert alert-error">
+                        <span>{errorToast}</span>
+                    </div>
+                </div>
+            )}
             <div className="container mx-auto px-4 py-6">
                 <div className="flex flex-col lg:flex-row gap-6">
                     <div className="w-full lg:w-1/3 lg:order-2">

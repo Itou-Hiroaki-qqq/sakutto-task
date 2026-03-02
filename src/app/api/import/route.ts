@@ -78,6 +78,20 @@ export async function POST(request: NextRequest) {
         if (importData.tasks && Array.isArray(importData.tasks)) {
             for (const task of importData.tasks) {
                 try {
+                    // 必須フィールドの検証
+                    if (!task.title || typeof task.title !== 'string' || !task.title.trim()) {
+                        errors.push('タイトルが未入力のタスクはスキップされました');
+                        continue;
+                    }
+                    if (!task.due_date || typeof task.due_date !== 'string' || isNaN(Date.parse(task.due_date))) {
+                        errors.push(`タスク「${task.title}」: 日付が不正です`);
+                        continue;
+                    }
+                    if (task.recurrence && task.recurrence.weekdays !== null && task.recurrence.weekdays !== undefined && !Array.isArray(task.recurrence.weekdays)) {
+                        errors.push(`タスク「${task.title}」: weekdays は配列である必要があります`);
+                        continue;
+                    }
+
                     // 新しいUUIDを生成（既存データとの競合を避ける）
                     const newTaskId = randomUUID();
 
@@ -137,6 +151,20 @@ export async function POST(request: NextRequest) {
         if (importData.memorials && Array.isArray(importData.memorials)) {
             for (const memorial of importData.memorials) {
                 try {
+                    // 必須フィールドの検証
+                    if (!memorial.title || typeof memorial.title !== 'string' || !memorial.title.trim()) {
+                        errors.push('タイトルが未入力の記念日はスキップされました');
+                        continue;
+                    }
+                    if (!memorial.due_date || typeof memorial.due_date !== 'string' || isNaN(Date.parse(memorial.due_date))) {
+                        errors.push(`記念日「${memorial.title}」: 日付が不正です`);
+                        continue;
+                    }
+                    if (memorial.recurrence && memorial.recurrence.weekdays !== null && memorial.recurrence.weekdays !== undefined && !Array.isArray(memorial.recurrence.weekdays)) {
+                        errors.push(`記念日「${memorial.title}」: weekdays は配列である必要があります`);
+                        continue;
+                    }
+
                     // 新しいUUIDを生成（既存データとの競合を避ける）
                     const newMemorialId = randomUUID();
 

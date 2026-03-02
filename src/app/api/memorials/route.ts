@@ -81,10 +81,10 @@ export async function POST(request: NextRequest) {
         }
 
         return NextResponse.json({ success: true, memorialId });
-    } catch (error: any) {
+    } catch (error) {
         console.error('Error creating memorial:', error);
         return NextResponse.json(
-            { error: error?.message || 'Internal server error', details: error },
+            { error: 'Internal server error' },
             { status: 500 }
         );
     }
@@ -143,10 +143,10 @@ export async function PUT(request: NextRequest) {
         }
 
         return NextResponse.json({ success: true });
-    } catch (error: any) {
+    } catch (error) {
         console.error('Error updating memorial:', error);
         return NextResponse.json(
-            { error: error?.message || 'Internal server error', details: error },
+            { error: 'Internal server error' },
             { status: 500 }
         );
     }

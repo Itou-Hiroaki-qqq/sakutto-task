@@ -128,11 +128,6 @@ export async function POST(request: NextRequest) {
         RETURNING id, notification_time
     `;
         
-        // デバッグ: 保存された通知時刻をログ出力
-        if (notificationEnabled && notificationTime) {
-            console.log(`[Task Creation] Task created with notification_time: "${notificationTime}" (saved as: "${taskResult[0].notification_time}")`);
-        }
-
         const taskId = taskResult[0].id;
 
         // 繰り返し設定がある場合
@@ -153,10 +148,10 @@ export async function POST(request: NextRequest) {
         clearTasksCache(user.id);
 
         return NextResponse.json({ success: true, taskId });
-    } catch (error: any) {
+    } catch (error) {
         console.error('Error creating task:', error);
         return NextResponse.json(
-            { error: error?.message || 'Internal server error', details: error },
+            { error: 'Internal server error' },
             { status: 500 }
         );
     }
@@ -229,10 +224,6 @@ export async function PUT(request: NextRequest) {
         RETURNING notification_time
     `;
         
-        if (notificationEnabled && notificationTime && updateResult.length > 0) {
-            console.log(`[Task Update] Task updated with notification_time: "${notificationTime}" (saved as: "${updateResult[0].notification_time}")`);
-        }
-
         if (recurrenceType) {
             await sql`
                 DELETE FROM task_recurrences WHERE task_id = ${taskId}
@@ -256,10 +247,10 @@ export async function PUT(request: NextRequest) {
 
         clearTasksCache(user.id, taskId);
         return NextResponse.json({ success: true });
-    } catch (error: any) {
+    } catch (error) {
         console.error('Error updating task:', error);
         return NextResponse.json(
-            { error: error?.message || 'Internal server error', details: error },
+            { error: 'Internal server error' },
             { status: 500 }
         );
     }

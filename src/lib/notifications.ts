@@ -22,17 +22,6 @@ export async function getTasksToNotify(
         notificationTime: string;
     }>
 > {
-    const targetDateStr = targetDate.toISOString().split('T')[0];
-    console.log(`[Notification] Getting tasks to notify for date ${targetDateStr} at time ${targetTime}`);
-    console.log(`[Notification] Target date details:`, {
-        targetDateISO: targetDate.toISOString(),
-        targetDateStr,
-        targetTime,
-        targetDateYear: targetDate.getFullYear(),
-        targetDateMonth: targetDate.getMonth() + 1,
-        targetDateDay: targetDate.getDate()
-    });
-    
     // 指定時刻に通知が必要なタスクをすべて取得
     // 注意: notification_timeは文字列型なので、トリムして比較
     const tasks = await sql`
@@ -53,76 +42,6 @@ export async function getTasksToNotify(
             AND TRIM(t.notification_time) = TRIM(${targetTime})
     `;
 
-    console.log(`[Notification] Found ${tasks.length} task(s) with notification_enabled=true and notification_time=${targetTime}`);
-    
-    // デバッグ: 実際に取得されたタスクの詳細をログ出力
-    if (tasks.length > 0) {
-        console.log(`[Notification] Retrieved tasks:`, tasks.map((t: any) => ({
-            id: t.task_id,
-            title: t.title,
-            notification_time: t.notification_time,
-            due_date: t.due_date,
-            recurrence_type: t.recurrence_type
-        })));
-    } else {
-        // 通知が有効なタスクをすべて取得して、なぜマッチしないか確認
-        // 特に、通知時刻が設定されているタスクを詳しく確認
-        const allEnabledTasks = await sql`
-            SELECT 
-                t.id as task_id,
-                t.title,
-                t.notification_time,
-                t.due_date,
-                tr.type as recurrence_type
-            FROM tasks t
-            LEFT JOIN task_recurrences tr ON t.id = tr.task_id
-            WHERE t.notification_enabled = true
-            AND t.notification_time IS NOT NULL
-            AND t.notification_time != ''
-            ORDER BY t.created_at DESC
-            LIMIT 20
-        `;
-        console.log(`[Notification] All enabled tasks with notification_time (recent 20):`, allEnabledTasks.map((t: any) => ({
-            id: t.task_id,
-            title: t.title,
-            notification_time: t.notification_time,
-            notification_time_trimmed: t.notification_time ? String(t.notification_time).trim() : null,
-            target_time: targetTime,
-            target_time_trimmed: targetTime.trim(),
-            matches: t.notification_time ? String(t.notification_time).trim() === targetTime.trim() : false,
-            due_date: t.due_date,
-            recurrence_type: t.recurrence_type
-        })));
-        
-        // さらに、通知時刻が近いタスクを検索（5分以内）
-        const targetHour = parseInt(targetTime.split(':')[0]);
-        const targetMin = parseInt(targetTime.split(':')[1]);
-        const nearbyTasks = await sql`
-            SELECT 
-                t.id as task_id,
-                t.title,
-                t.notification_time,
-                t.due_date
-            FROM tasks t
-            WHERE t.notification_enabled = true
-            AND t.notification_time IS NOT NULL
-            AND t.notification_time != ''
-            AND (
-                t.notification_time LIKE ${`${String(targetHour).padStart(2, '0')}:%`}
-                OR t.notification_time LIKE ${targetHour > 0 ? `${String(targetHour - 1).padStart(2, '0')}:%` : '23:%'}
-                OR t.notification_time LIKE ${targetHour < 23 ? `${String(targetHour + 1).padStart(2, '0')}:%` : '00:%'}
-            )
-            LIMIT 10
-        `;
-        if (nearbyTasks.length > 0) {
-            console.log(`[Notification] Nearby notification times found:`, nearbyTasks.map((t: any) => ({
-                id: t.task_id,
-                title: t.title,
-                notification_time: t.notification_time,
-                due_date: t.due_date
-            })));
-        }
-    }
 
     const result: Array<{
         taskId: string;
@@ -136,21 +55,10 @@ export async function getTasksToNotify(
     for (const task of tasks) {
         const taskDueDate = new Date(task.due_date);
         taskDueDate.setHours(0, 0, 0, 0);
-        const targetDateNormalized = new Date(targetDate);
-        targetDateNormalized.setHours(0, 0, 0, 0);
 
-        // 単発タスク（繰り返しなし）
         if (!task.recurrence_type) {
-            const isMatchingDate = isSameDay(taskDueDate, targetDate);
-            console.log(`[Notification] Checking single task ${task.task_id}: "${task.title}"`, {
-                taskDueDate: taskDueDate.toISOString().split('T')[0],
-                targetDate: targetDateNormalized.toISOString().split('T')[0],
-                isMatchingDate,
-                notificationTime: task.notification_time
-            });
-            
-            if (isMatchingDate) {
-                console.log(`[Notification] Including single task ${task.task_id}: "${task.title}" on ${taskDueDate.toISOString().split('T')[0]}`);
+            // 単発タスク（繰り返しなし）
+            if (isSameDay(taskDueDate, targetDate)) {
                 result.push({
                     taskId: task.task_id,
                     userId: task.user_id,
@@ -158,8 +66,6 @@ export async function getTasksToNotify(
                     dueDate: taskDueDate,
                     notificationTime: task.notification_time,
                 });
-            } else {
-                console.log(`[Notification] Excluding single task ${task.task_id}: due_date=${taskDueDate.toISOString().split('T')[0]} doesn't match target=${targetDateNormalized.toISOString().split('T')[0]}`);
             }
         } else {
             // 繰り返しタスク: shouldIncludeRecurringTaskを使用
@@ -174,7 +80,6 @@ export async function getTasksToNotify(
             );
 
             if (shouldInclude) {
-                console.log(`[Notification] Including recurring task ${task.task_id}: "${task.title}" (type=${task.recurrence_type})`);
                 result.push({
                     taskId: task.task_id,
                     userId: task.user_id,
@@ -182,13 +87,10 @@ export async function getTasksToNotify(
                     dueDate: taskDueDate,
                     notificationTime: task.notification_time,
                 });
-            } else {
-                console.log(`[Notification] Excluding recurring task ${task.task_id}: "${task.title}" (type=${task.recurrence_type}) - doesn't match target date`);
             }
         }
     }
 
-    console.log(`[Notification] Filtered to ${result.length} task(s) matching target date`);
     return result;
 }
 
@@ -227,9 +129,7 @@ export async function sendEmailNotification(
         // 無料プラン: onboarding@resend.dev を使用（自分のメールアドレスにしか送信不可）
         // 独自ドメイン設定後: your-domain.com のメールアドレスを使用
         const fromAddress = process.env.RESEND_FROM_EMAIL || 'Sakutto Task <onboarding@resend.dev>';
-        console.log(`[Email] Attempting to send email to: ${email}`);
-        console.log(`[Email] From: ${fromAddress}`);
-        
+
         const result = await resend.emails.send({
             from: fromAddress,
             to: email,
@@ -240,16 +140,13 @@ export async function sendEmailNotification(
         if (result.error) {
             const errorMsg = `Resend API error: ${JSON.stringify(result.error)}`;
             console.error('[Email] Failed to send email notification:', result.error);
-            console.error('[Email] Error details:', JSON.stringify(result.error, null, 2));
             return { success: false, error: errorMsg };
         }
 
-        console.log('[Email] Email sent successfully:', result.data);
         return { success: true };
     } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
         console.error('[Email] Error sending email notification:', error);
-        console.error('[Email] Error stack:', error instanceof Error ? error.stack : 'No stack trace');
         return { success: false, error: errorMsg };
     }
 }
@@ -260,27 +157,18 @@ export async function sendNotificationsForDateTime(
     targetDate: Date,
     targetTime: string
 ): Promise<{ emailCount: number; webPushCount: number; errors: string[] }> {
-    // webPushCountは互換性のため残していますが、常に0を返します
-    console.log(`[Notification] ===== sendNotificationsForDateTime called =====`);
-    console.log(`[Notification] Starting notification check for ${targetDate.toISOString().split('T')[0]} ${targetTime}`);
-    console.log(`[Notification] Target date: ${targetDate.toISOString()}, Target time: ${targetTime}`);
-    
     const tasks = await getTasksToNotify(targetDate, targetTime);
-    console.log(`[Notification] Found ${tasks.length} task(s) to notify`);
-    
+
     if (tasks.length === 0) {
-        console.log(`[Notification] No tasks to notify, returning early`);
         return { emailCount: 0, webPushCount: 0, errors: [] };
     }
-    
+
     const errors: string[] = [];
     let emailCount = 0;
-    const webPushCount = 0; // Web Push通知は削除されました
 
     for (let i = 0; i < tasks.length; i++) {
         const task = tasks[i];
-        console.log(`[Notification] Processing task ${i + 1}/${tasks.length}: ${task.taskId} for user ${task.userId}: "${task.title}"`);
-        
+
         // ユーザーの通知設定を取得
         const settings = await sql`
             SELECT email, email_notification_enabled
@@ -290,22 +178,17 @@ export async function sendNotificationsForDateTime(
         `;
 
         if (settings.length === 0) {
-            console.log(`[Notification] No notification settings found for user ${task.userId}, skipping`);
-            continue; // 通知設定がないユーザーはスキップ
+            continue;
         }
 
         const setting = settings[0];
-        console.log(`[Notification] User ${task.userId} settings: email_enabled=${setting.email_notification_enabled}, email=${setting.email || 'none'}`);
 
         // メール通知を送信
-        // 注意: SQLクエリで既に時刻でフィルタリングされているので、重複チェックは不要
         // Resendのレート制限（2リクエスト/秒）に対応するため、前のメール送信から0.6秒待機
         if (setting.email_notification_enabled && setting.email) {
             if (i > 0) {
-                // 2つ目以降のメール送信の前に待機（レート制限対策）
-                await new Promise(resolve => setTimeout(resolve, 600)); // 0.6秒待機
+                await new Promise(resolve => setTimeout(resolve, 600));
             }
-            console.log(`[Notification] Sending email notification to ${setting.email} for task "${task.title}"`);
             const emailResult = await sendEmailNotification(
                 setting.email,
                 task.title,
@@ -314,33 +197,20 @@ export async function sendNotificationsForDateTime(
             );
             if (emailResult.success) {
                 emailCount++;
-                console.log(`[Notification] Email sent successfully to ${setting.email}`);
             } else {
-                const errorMsg = emailResult.error 
+                const errorMsg = emailResult.error
                     ? `Failed to send email to ${setting.email}: ${emailResult.error}`
                     : `Failed to send email to user ${task.userId} for task ${task.taskId}`;
                 errors.push(errorMsg);
                 console.error(`[Notification] ${errorMsg}`);
-                
+
                 // レート制限エラーの場合は、次のメール送信まで長めに待機
                 if (emailResult.error && emailResult.error.includes('rate_limit')) {
-                    console.log(`[Notification] Rate limit detected, waiting 1 second before next email...`);
                     await new Promise(resolve => setTimeout(resolve, 1000));
                 }
             }
-        } else {
-            if (!setting.email_notification_enabled) {
-                console.log(`[Notification] Email notifications are disabled for user ${task.userId}`);
-            } else if (!setting.email) {
-                console.log(`[Notification] No email address set for user ${task.userId}`);
-            }
         }
-
-        // Web Push通知を送信
-        // 注意: SQLクエリで既に時刻でフィルタリングされているので、重複チェックは不要
-        // Web Push通知は削除されました。メール通知のみを送信します。
     }
 
-    console.log(`[Notification] Notification check completed: emailCount=${emailCount}, webPushCount=${webPushCount}, errors=${errors.length}`);
-    return { emailCount, webPushCount, errors };
+    return { emailCount, webPushCount: 0, errors };
 }

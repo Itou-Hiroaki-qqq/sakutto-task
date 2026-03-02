@@ -90,10 +90,10 @@ export async function DELETE(
     `;
 
         return NextResponse.json({ success: true });
-    } catch (error: any) {
+    } catch (error) {
         console.error('Error deleting memorial:', error);
         return NextResponse.json(
-            { error: error?.message || 'Internal server error' },
+            { error: 'Internal server error' },
             { status: 500 }
         );
     }

@@ -28,17 +28,8 @@ export async function GET(
     `;
 
         if (taskResult.length === 0) {
-            // デバッグ: ユーザーIDとタスクIDを確認
-            const allTasks = await sql`
-                SELECT id, user_id, title FROM tasks WHERE id = ${taskId} LIMIT 1
-            `;
-            console.error('Task not found:', {
-                requestedTaskId: taskId,
-                userId: user.id,
-                foundTask: allTasks[0] || null,
-            });
             return NextResponse.json(
-                { error: 'Task not found', taskId, userId: user.id },
+                { error: 'Task not found' },
                 { status: 404 }
             );
         }
@@ -68,8 +59,6 @@ export async function GET(
                 weekdays: recurrenceResult[0].weekdays,
             }
             : null;
-
-        console.log('Task loaded:', { taskId, task: taskData, recurrence: recurrenceData });
 
         return NextResponse.json({
             task: taskData,

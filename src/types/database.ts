@@ -67,18 +67,6 @@ export interface UserNotificationSettings {
     user_id: string;
     email?: string;  // 通知用メールアドレス
     email_notification_enabled: boolean;
-    web_push_enabled: boolean;
-    created_at: Date;
-    updated_at: Date;
-}
-
-// Web Pushサブスクリプション
-export interface WebPushSubscription {
-    id: string;
-    user_id: string;
-    endpoint: string;  // Push ServiceのエンドポイントURL
-    p256dh: string;   // 公開鍵（暗号化用）
-    auth: string;     // 認証シークレット
     created_at: Date;
     updated_at: Date;
 }

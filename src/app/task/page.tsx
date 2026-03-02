@@ -191,13 +191,12 @@ function TaskEditPageContent() {
                 if (settingsResponse.ok) {
                     const settingsData = await settingsResponse.json();
                     const hasEmail = settingsData.settings?.email && settingsData.settings?.email_notification_enabled;
-                    const hasWebPush = settingsData.settings?.web_push_enabled;
 
-                    if (!hasEmail && !hasWebPush) {
+                    if (!hasEmail) {
                         const returnDate = searchParams.get('date');
                         const returnUrl = `/task${taskIdParam ? `?taskId=${taskIdParam}` : ''}${returnDate ? `&date=${returnDate}` : ''}`;
                         const confirmed = confirm(
-                            '通知を送信するには、メールアドレスまたはWeb Push通知の設定が必要です。\n通知設定ページに移動しますか？'
+                            '通知を送信するには、メールアドレスの設定が必要です。\n通知設定ページに移動しますか？'
                         );
                         if (confirmed) {
                             router.push(`/settings/notifications?returnUrl=${encodeURIComponent(returnUrl)}`);
