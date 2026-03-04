@@ -11,11 +11,12 @@ export async function getMemorialsForDate(
 
     // 1. すべての記念日を取得（繰り返し設定も含む）
     const memorials = await sql`
-    SELECT 
+    SELECT
         m.id,
         m.user_id,
         m.title,
         m.due_date,
+        m.is_holiday,
         m.created_at,
         mr.type as recurrence_type,
         mr.custom_days,
@@ -195,10 +196,11 @@ async function shouldIncludeRecurringMemorial(
 // すべての記念日を取得（リスト表示用）
 export async function getAllMemorials(userId: string) {
     const memorials = await sql`
-    SELECT 
+    SELECT
         m.id,
         m.title,
         m.due_date,
+        m.is_holiday,
         m.created_at,
         mr.type as recurrence_type
     FROM memorials m
@@ -211,6 +213,7 @@ export async function getAllMemorials(userId: string) {
         id: m.id,
         title: m.title,
         due_date: new Date(m.due_date),
+        is_holiday: m.is_holiday || false,
         recurrence_type: m.recurrence_type || null,
         created_at: new Date(m.created_at),
     }));

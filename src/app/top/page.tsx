@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Calendar from '@/components/Calendar';
+import Calendar, { MemorialHolidayInfo } from '@/components/Calendar';
 import TodoList from '@/components/TodoList';
 import Layout from '@/components/Layout';
 import { createClient } from '@/lib/supabase/client';
@@ -54,6 +54,7 @@ function TopPageContent() {
 
     const [tasks, setTasks] = useState<DisplayTask[]>([]);
     const [memorials, setMemorials] = useState<Array<{ id: string; title: string }>>([]);
+    const [memorialHolidays, setMemorialHolidays] = useState<MemorialHolidayInfo[]>([]);
     const [overdueDates, setOverdueDates] = useState<Date[]>([]);
     const [userId, setUserId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
@@ -84,6 +85,29 @@ function TopPageContent() {
         run();
         return () => { mounted = false; };
     }, [router]);
+
+    // 記念日祝日データを取得（カレンダー表示用）
+    useEffect(() => {
+        if (!userId) return;
+        const fetchMemorialHolidays = async () => {
+            try {
+                const res = await fetch('/api/memorials');
+                if (res.ok) {
+                    const data = await res.json();
+                    const holidays: MemorialHolidayInfo[] = (data.memorials || [])
+                        .filter((m: any) => m.is_holiday)
+                        .map((m: any) => ({
+                            due_date: format(new Date(m.due_date), 'yyyy-MM-dd'),
+                            recurrence_type: m.recurrence_type || null,
+                        }));
+                    setMemorialHolidays(holidays);
+                }
+            } catch (e) {
+                console.error('Failed to load memorial holidays:', e);
+            }
+        };
+        fetchMemorialHolidays();
+    }, [userId]);
 
     // タスク編集のバックグラウンド保存失敗時（編集画面から戻ったあとエラーが判明した場合）
     useEffect(() => {
@@ -347,6 +371,7 @@ function TopPageContent() {
                             displayMonth={displayMonth}
                             onDateSelect={handleDateSelect}
                             onMonthChange={handleMonthChange}
+                            memorialHolidays={memorialHolidays}
                         />
                     </div>
                     <div className="w-full lg:w-2/3 lg:order-1">

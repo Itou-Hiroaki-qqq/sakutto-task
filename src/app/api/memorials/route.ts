@@ -54,6 +54,7 @@ export async function POST(request: NextRequest) {
             notificationEnabled,
             notificationTime,
             yearlyEnabled,
+            isHoliday,
         } = body;
 
         if (!title || !dueDate) {
@@ -65,8 +66,8 @@ export async function POST(request: NextRequest) {
 
         // 記念日を作成
         const memorialResult = await sql`
-        INSERT INTO memorials (user_id, title, due_date, notification_enabled, notification_time)
-        VALUES (${user.id}, ${title}, ${dueDate}, ${notificationEnabled}, ${notificationTime})
+        INSERT INTO memorials (user_id, title, due_date, notification_enabled, notification_time, is_holiday)
+        VALUES (${user.id}, ${title}, ${dueDate}, ${notificationEnabled}, ${notificationTime}, ${isHoliday || false})
         RETURNING id
     `;
 
@@ -109,6 +110,7 @@ export async function PUT(request: NextRequest) {
             notificationEnabled,
             notificationTime,
             yearlyEnabled,
+            isHoliday,
         } = body;
 
         if (!memorialId || !title || !dueDate) {
@@ -124,7 +126,8 @@ export async function PUT(request: NextRequest) {
         SET title = ${title},
             due_date = ${dueDate},
             notification_enabled = ${notificationEnabled},
-            notification_time = ${notificationTime}
+            notification_time = ${notificationTime},
+            is_holiday = ${isHoliday || false}
         WHERE id = ${memorialId} AND user_id = ${user.id}
     `;
 

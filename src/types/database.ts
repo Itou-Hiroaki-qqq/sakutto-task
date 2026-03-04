@@ -79,6 +79,7 @@ export interface Memorial {
     due_date: Date;
     notification_time?: string;  // HH:mm形式
     notification_enabled: boolean;
+    is_holiday: boolean;
     created_at: Date;
     updated_at: Date;
 }

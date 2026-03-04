@@ -26,6 +26,7 @@ function MemorialEditPageContent() {
     const [notificationEnabled, setNotificationEnabled] = useState(false);
     const [notificationTime, setNotificationTime] = useState('');
     const [yearlyEnabled, setYearlyEnabled] = useState(false);
+    const [isHoliday, setIsHoliday] = useState(false);
 
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -85,6 +86,7 @@ function MemorialEditPageContent() {
             setNotificationEnabled(false);
             setNotificationTime('');
             setYearlyEnabled(false);
+            setIsHoliday(false);
             // リストを再読み込み
             if (userId) {
                 loadMemorialList();
@@ -126,6 +128,7 @@ function MemorialEditPageContent() {
 
                 setNotificationEnabled(data.memorial.notification_enabled || false);
                 setNotificationTime(data.memorial.notification_time || '');
+                setIsHoliday(data.memorial.is_holiday || false);
 
                 // 繰り返し設定がyearlyの場合のみ、毎年設定を有効にする
                 setYearlyEnabled(data.memorial.recurrence?.type === 'yearly' || false);
@@ -191,6 +194,7 @@ function MemorialEditPageContent() {
                 notificationEnabled,
                 notificationTime: notificationEnabled ? notificationTime : null,
                 yearlyEnabled,
+                isHoliday,
             };
 
             const response = await fetch('/api/memorials', {
@@ -207,6 +211,7 @@ function MemorialEditPageContent() {
                 setNotificationEnabled(false);
                 setNotificationTime('');
                 setYearlyEnabled(false);
+                setIsHoliday(false);
                 // 記念日リストを再読み込み
                 await loadMemorialList();
                 // 記念日設定ページ（リストページ）に遷移
@@ -579,6 +584,22 @@ function MemorialEditPageContent() {
                             onChange={(e) => setYearlyEnabled(e.target.checked)}
                         />
                     </label>
+                </div>
+
+                {/* 祝日設定 */}
+                <div className="form-control mb-6">
+                    <label className="label cursor-pointer justify-start">
+                        <span className="label-text font-semibold">祝日として設定する</span>
+                        <input
+                            type="checkbox"
+                            className="checkbox checkbox-primary"
+                            checked={isHoliday}
+                            onChange={(e) => setIsHoliday(e.target.checked)}
+                        />
+                    </label>
+                    <p className="text-sm text-base-content/60">
+                        チェックを入れると、カレンダー上でその日付が赤く表示されます
+                    </p>
                 </div>
 
                 {/* 登録済みの記念日 */}

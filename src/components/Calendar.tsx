@@ -1,9 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, getDay } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, getDay, endOfMonth as fnsEndOfMonth, parseISO } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { getHoliday } from '@/lib/holidays';
+
+export interface MemorialHolidayInfo {
+    due_date: string; // 'YYYY-MM-DD'
+    recurrence_type: string | null;
+}
 
 interface CalendarProps {
     currentDate: Date;
@@ -11,9 +16,36 @@ interface CalendarProps {
     displayMonth?: Date;
     onDateSelect: (date: Date) => void;
     onMonthChange?: (date: Date) => void;
+    memorialHolidays?: MemorialHolidayInfo[];
 }
 
-export default function Calendar({ currentDate, selectedDate, displayMonth: propDisplayMonth, onDateSelect, onMonthChange }: CalendarProps) {
+function isMemorialHolidayDate(day: Date, memorialHolidays: MemorialHolidayInfo[]): boolean {
+    if (!memorialHolidays || memorialHolidays.length === 0) return false;
+    return memorialHolidays.some(m => {
+        const dueDate = parseISO(m.due_date);
+        dueDate.setHours(0, 0, 0, 0);
+        const checkDay = new Date(day);
+        checkDay.setHours(0, 0, 0, 0);
+        if (checkDay < dueDate) return false;
+        if (!m.recurrence_type) {
+            return isSameDay(dueDate, day);
+        }
+        switch (m.recurrence_type) {
+            case 'yearly':
+                return dueDate.getMonth() === day.getMonth() && dueDate.getDate() === day.getDate();
+            case 'monthly':
+                return dueDate.getDate() === day.getDate();
+            case 'monthly_end':
+                return isSameDay(day, fnsEndOfMonth(day));
+            case 'weekly':
+                return getDay(dueDate) === getDay(day);
+            default:
+                return isSameDay(dueDate, day);
+        }
+    });
+}
+
+export default function Calendar({ currentDate, selectedDate, displayMonth: propDisplayMonth, onDateSelect, onMonthChange, memorialHolidays }: CalendarProps) {
     const [displayMonth, setDisplayMonth] = useState(propDisplayMonth || currentDate);
     const [isTransitioning, setIsTransitioning] = useState(false);
     const [dragStart, setDragStart] = useState<number | null>(null);
@@ -137,7 +169,13 @@ export default function Calendar({ currentDate, selectedDate, displayMonth: prop
                             const isSelected = isSameDay(day, selectedDate);
                             const isToday = isSameDay(day, new Date());
                             const holiday = getHoliday(day);
-                            const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+                            const isNationalHoliday = holiday !== undefined;
+                            const isMemorialHoliday = isCurrentMonth && isMemorialHolidayDate(day, memorialHolidays || []);
+
+                            // 赤: 日曜 or 祝日 or 記念日祝日
+                            const isRedDay = day.getDay() === 0 || isNationalHoliday || isMemorialHoliday;
+                            // 青: 土曜（かつ祝日・記念日祝日でない）
+                            const isBlueDay = day.getDay() === 6 && !isNationalHoliday && !isMemorialHoliday;
 
                             return (
                                 <button
@@ -150,13 +188,13 @@ export default function Calendar({ currentDate, selectedDate, displayMonth: prop
                                             : isToday
                                                 ? 'btn-ghost bg-primary/20 font-bold'
                                                 : 'btn-ghost'
-                                        } ${isWeekend && isCurrentMonth ? (day.getDay() === 0 ? 'text-red-500' : 'text-blue-500') : ''}`}
+                                        } ${isCurrentMonth ? (isRedDay ? 'text-red-500' : isBlueDay ? 'text-blue-500' : '') : ''}`}
                                 >
                                     <div className="flex flex-col items-center">
                                         <span>{format(day, 'd')}</span>
-                                        {holiday && isCurrentMonth && (
+                                        {(holiday || isMemorialHoliday) && isCurrentMonth && (
                                             <span className="text-[8px] leading-tight text-primary">
-                                                {holiday.name}
+                                                {holiday ? holiday.name : '●'}
                                             </span>
                                         )}
                                     </div>
@@ -169,4 +207,5 @@ export default function Calendar({ currentDate, selectedDate, displayMonth: prop
         </div>
     );
 }
+
 

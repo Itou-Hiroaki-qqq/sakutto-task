@@ -20,12 +20,13 @@ export async function GET(
 
         // 記念日を取得
         const memorials = await sql`
-        SELECT 
+        SELECT
             m.id,
             m.title,
             m.due_date,
             m.notification_enabled,
             m.notification_time,
+            m.is_holiday,
             mr.type as recurrence_type,
             mr.custom_days,
             mr.custom_unit,
@@ -48,6 +49,7 @@ export async function GET(
                 due_date: memorial.due_date,
                 notification_enabled: memorial.notification_enabled,
                 notification_time: memorial.notification_time,
+                is_holiday: memorial.is_holiday || false,
                 recurrence: memorial.recurrence_type
                     ? {
                           type: memorial.recurrence_type,
